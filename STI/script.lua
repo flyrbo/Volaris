@@ -937,7 +937,7 @@ Starlight:OnDestroy(cleanup)
 
 --// DASHBOARD
 window:CreateHomeTab({
-    SupportedExecutors = {}, 
+    SupportedExecutors = {"Madium"}, 
     UnsupportedExecutors = {},
     DiscordInvite = "1234",
     Backdrop = nil,
