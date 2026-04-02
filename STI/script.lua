@@ -19,6 +19,8 @@ Made by 			░▒▓████████▓▒░▒▓█▓▒░   ░▒
                                       
 Credits to Nebula Softworks © for the UI Library.
 
+loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/STI/script.lua"))()
+
 
                       !!WARNING!!
 This script is created for educational and testing purposes only.
