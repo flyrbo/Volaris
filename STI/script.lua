@@ -940,6 +940,13 @@ window:CreateHomeTab({
     SupportedExecutors = {"Madium"}, 
     UnsupportedExecutors = {},
     DiscordInvite = "1234",
+    Changelog = {       
+        {
+            Title = "Volaris Hub LAUNCH!",
+            Date = "2nd April 2026",
+            Description = "Official launch of Volaris Hub, with the release of a Survive The Island script!",
+        }
+    }
     Backdrop = nil,
     IconStyle = 1,
 })
