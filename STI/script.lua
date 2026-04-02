@@ -19,7 +19,7 @@ Made by 			░▒▓████████▓▒░▒▓█▓▒░   ░▒
                                       
 Credits to Nebula Softworks © for the UI Library.
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/STI/script.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.lua"))()
 
 
                       !!WARNING!!
@@ -37,9 +37,50 @@ If you do not agree with these terms, do not use this script.
 --]]
 
 --/ UI Library import
-local Starlight = loadstring(game:HttpGet("https://raw.nebulasoftworks.xyz/starlight"))()  
+local Starlight = loadstring(game:HttpGet("https://raw.nebulasoftworks.xyz/starlight"))()
 local NebulaIcons = loadstring(game:HttpGet("https://raw.nebulasoftworks.xyz/nebula-icon-library-loader"))()
 
+
+--/ SUPPORTED FUNCTIONS CHECK
+local function checkExecutor()
+    local missing = {}
+
+    local function check(name, func)
+        if typeof(func) ~= "function" then
+            table.insert(missing, name)
+        end
+    end
+
+    check("loadstring", loadstring)
+    check("HttpGet", game.HttpGet)
+    check("getgenv", getgenv)
+    check("firetouchinterest", firetouchinterest)
+    check("fireproximityprompt", fireproximityprompt)
+
+    if #missing > 0 then
+        warn("Executor missing required functions:")
+
+        for _, v in ipairs(missing) do
+            warn("- " .. v)
+        end
+
+        return false
+    end
+
+    return true
+end
+
+--/ LOADER USED CHECK
+if not getgenv().funcCheck then
+    if not checkExecutor() then
+        local Loaded = Starlight:Notification({
+    	    Title = "Unsupported Executor",
+    	    Icon = NebulaIcons:GetIcon('shield-x', 'Lucide'),
+    	    Content = "This script will lose key functionality using this executor. Please report the name of the executor on the GitHub page.",
+	    }, "UNSUPPORTED EXECUTOR")
+        return
+    end
+end
 
 --/ PLACE ID CHECK
 if tostring(game.PlaceId) ~= "130818457717791" and tostring(game.PlaceId) ~= "80953732024525" then
@@ -902,6 +943,63 @@ functions.spawnItemFunction = function()
     }, "SPAWN_ITEM_DONE")
 	Global.Running.SpawnItem = false
 end
+functions.antiAFKFunction = function()
+    if Global.Running.AntiAFK then return end
+    Global.Running.AntiAFK = true
+
+    Starlight:Notification({
+        Title = "Anti AFK",
+        Icon = NebulaIcons:GetIcon('circle-check', 'Lucide'),
+        Content = "Anti-AFK enabled.",
+    }, "ANTIAFK_ON")
+
+    local player = game:GetService("Players").LocalPlayer
+
+    if getconnections then
+        for _, connection in pairs(getconnections(player.Idled)) do
+            if connection.Disable then
+                connection:Disable()
+            elseif connection.Disconnect then
+                connection:Disconnect()
+            end
+        end
+    else
+        Starlight:Notification({
+            Title = "Anti AFK",
+            Icon = NebulaIcons:GetIcon('triangle-alert', 'Lucide'),
+            Content = "Using fallback method due to missing executor functionalities. This is unreliable.",
+        }, "ANTIAFK_FALLBACK")
+
+        local vu = game:GetService("VirtualUser")
+
+        Global.Connections.AntiAFK = player.Idled:Connect(function()
+            if not Global.Toggles.AntiAFK then return end
+            vu:CaptureController()
+            vu:ClickButton2(Vector2.new())
+        end)
+    end
+
+    task.spawn(function()
+        while Global.Toggles.AntiAFK do
+            task.wait(0.5)
+        end
+
+        if Global.Connections.AntiAFK then
+            Global.Connections.AntiAFK:Disconnect()
+            Global.Connections.AntiAFK = nil
+        end
+
+        Starlight:Notification({
+            Title = "Anti AFK",
+            Icon = NebulaIcons:GetIcon('circle-check', 'Lucide'),
+            Content = "Anti-AFK disabled.",
+        }, "ANTIAFK_OFF")
+
+        Global.Running.AntiAFK = false
+    end)
+end
+
+
 
 --// CLEANUP
 local function cleanup()
@@ -1370,6 +1468,27 @@ siGroupbox:CreateInput({
         Global.Values.SpawnItemAmount = Text
     end,
 }, "SI_INPUT")
+
+
+--//// ANTI-AFK TAB
+local aaGroupbox = misc:CreateGroupbox({
+    Name = "Anti-Afk",
+	Icon = NebulaIcons:GetIcon('package', 'Lucide'),
+    Column = 1,
+}, "STI_MSC_AAGB")
+local antiAfkToggle = aaGroupbox:CreateToggle({
+    Name = "Anti-Afk",
+    Tooltip = "Will prevent the game from disconnecting you for inactivity.",
+    CurrentValue = false,
+    Style = 2,
+    Callback = function(Value)
+        Global.Toggles.AntiAFK = Value
+
+        if Value then
+            functions.antiAFKFunction()
+        end
+    end,
+}, "STI_MSC_AA")
 
 
 
