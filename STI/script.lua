@@ -1035,8 +1035,8 @@ Starlight:OnDestroy(cleanup)
 
 --// DASHBOARD
 window:CreateHomeTab({
-    SupportedExecutors = {"Madium"}, 
-    UnsupportedExecutors = {},
+    SupportedExecutors = {"Madium", "Potassium", "Opiumware"}, 
+    UnsupportedExecutors = {"Solara", "Velocity"},
     DiscordInvite = "1234",
     Changelog = {       
         {
