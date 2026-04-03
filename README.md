@@ -65,6 +65,14 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/h
 
 ---
 
+## 💗 Support Me
+
+Please consider liking the scripts on my account! It will help a TON by reaching out to more people as well as letting me know these scripts are helping others:
+
+<a href="https://rscripts.net/user/Fly" target="_blank"><img alt="Fly on Rscripts" loading="lazy" width="360" height="132" src="https://rscripts.net/api/embed/user/Fly?theme=dark" /></a>
+
+---
+
 ## 🤝 Final Note
 
 Use responsibly. This repository is intended for educational purposes, not misuse.
