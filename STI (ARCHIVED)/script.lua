@@ -1,3 +1,9 @@
+-- ARCHIVED!
+-- The game has been deleted by Roblox (apparently). Users may wish to check the code out if they please, although it is incredibly sloppy and unoptimised. I dont plan on updating this script anymore unless the game comes back.
+
+
+
+
 --[[
  █████   █████          ████                       ███             █████   █████            █████    
 ▒▒███   ▒▒███          ▒▒███                      ▒▒▒             ▒▒███   ▒▒███            ▒▒███     
