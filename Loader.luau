@@ -41,17 +41,12 @@ local TweenService = game:GetService("TweenService")
 --// Configuration
 
 --//// URLs
-local GITHUB_RAW = "https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/"
+local GITHUB_RAW = "https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/games/"
+local SCRIPT_EXTENSIONS = { ".lua", ".luau", ".txt" }
 
 local LIBRARY_URLS = {
     Starlight = "https://raw.nebulasoftworks.xyz/starlight",
     NebulaIcons = "https://raw.nebulasoftworks.xyz/nebula-icon-library-loader",
-}
-
---//// Game ID to Script map
-local SUPPORTED_GAMES = {
-    [130818457717791] = GITHUB_RAW .. "STI/script.lua", -- Survive The Island || ARCHIVED
-    [80953732024525] = GITHUB_RAW .. "STI/script.lua", -- Survive The Island (Game) || ARCHIVED
 }
 
 --//// Executor Functions
@@ -77,9 +72,39 @@ local function create(className, properties, parent)
     return instance
 end
 
---//// HttpGet Function
+--//// HttpGet Function (for libraries)
 local function executeUrl(url)
     return loadstring(game:HttpGet(url))()
+end
+
+--//// HTTP fetch
+local function fetchUrl(url)
+    local requestFn = request or http_request or (syn and syn.request)
+
+    if typeof(requestFn) == "function" then
+        local ok, response = pcall(requestFn, {
+            Url = url,
+            Method = "GET",
+        })
+
+        if ok and typeof(response) == "table" then
+            local body = response.Body or response.body or ""
+            local code = response.StatusCode or response.status_code or response.Status
+            return true, body, code
+        end
+
+        return false, tostring(response), nil
+    end
+
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
+
+    if not ok then
+        return false, tostring(body), nil
+    end
+
+    return true, body, nil
 end
 
 --//// Hidden GUI Mount
@@ -162,7 +187,7 @@ local function showNotification(title, message, duration)
             Transparency = 1,
         }, frame)
 
-        create("TextLabel", {
+        local titleLabel = create("TextLabel", {
             BackgroundTransparency = 1,
             Font = Enum.Font.SourceSansBold,
             Position = UDim2.fromScale(0.107, 0),
@@ -172,6 +197,11 @@ local function showNotification(title, message, duration)
             TextScaled = true,
             TextTransparency = 1,
         }, frame)
+        
+        create("UITextSizeConstraint", {
+            MaxTextSize = 20,
+            MinTextSize = 14,
+        }, titleLabel)
 
         create("Frame", {
             BackgroundColor3 = Color3.fromRGB(45, 45, 45),
@@ -181,7 +211,7 @@ local function showNotification(title, message, duration)
             Size = UDim2.fromScale(0.893, 0.02),
         }, frame)
 
-        create("TextLabel", {
+        local bodyLabel = create("TextLabel", {
             BackgroundTransparency = 1,
             Font = Enum.Font.SourceSans,
             Position = UDim2.fromScale(0.034, 0.475),
@@ -191,6 +221,11 @@ local function showNotification(title, message, duration)
             TextScaled = true,
             TextTransparency = 1,
         }, frame)
+        
+        create("UITextSizeConstraint", {
+            MaxTextSize = 16,
+            MinTextSize = 12,
+        }, bodyLabel)
 
         TweenService:Create(frame, NOTIFICATION_TWEEN, {
             Position = NOTIFICATION_POSITION,
@@ -263,30 +298,63 @@ if not NebulaIcons then
 end
 
 --//// Handshake with Script
-getgenv().funcCheck = true
+getgenv().Volaris = getgenv().Volaris or {}
+getgenv().Volaris.funcCheck = true
 
 --//// Script Init
-local scriptUrl = SUPPORTED_GAMES[game.PlaceId]
+local function scriptError(detail)
+    warn(("[Volaris] Game script issue: %s"):format(detail))
+    Starlight:Notification({
+        Title = "SCRIPT ERROR!",
+        Content = "Script unavailable. See F9 console.",
+    }, "SCRIPT_ERROR")
+end
 
-if scriptUrl then
-    local ok, result = pcall(executeUrl, scriptUrl)
-
-    if not ok then
-        warn("[Volaris] Game script failed to run:", result)
-        Starlight:Notification({
-            Title = "SCRIPT ERROR!",
-            Content = "The script for this game failed to load. Check the console (F9) for details.",
-        }, "SCRIPT_ERROR")
+--////// Helper for 404
+local function is404(statusCode, body)
+    if statusCode == 404 then
+        return true
     end
-else
+    if statusCode == nil and typeof(body) == "string" and body:sub(1, 14) == "404: Not Found" then
+        return true
+    end
+    return false
+end
+
+local ok, body, statusCode
+
+for _, ext in SCRIPT_EXTENSIONS do
+    local url = GITHUB_RAW .. game.GameId .. "/script" .. ext
+    ok, body, statusCode = fetchUrl(url)
+
+    if not is404(statusCode, body) then
+        break
+    end
+end
+
+if is404(statusCode, body) then
     local notification = {
         Title = "UNSUPPORTED GAME!",
-        Content = "Volaris could not find an appropriate script for this game!",
+        Content = "No script found for this game.",
     }
 
     if NebulaIcons then
         notification.Icon = NebulaIcons:GetIcon("shield-x", "Lucide")
     end
 
-    Starlight:Notification(notification, "INVALID_PLACEID")
+    Starlight:Notification(notification, "INVALID_GAMEID")
+elseif not ok or (statusCode ~= nil and statusCode ~= 200) then
+    scriptError(("fetch failed (status %s)"):format(tostring(statusCode)))
+else
+    local fn, compileError = loadstring(body)
+
+    if not fn then
+        scriptError(("compile error: %s"):format(compileError))
+    else
+        local runOk, runError = pcall(fn)
+
+        if not runOk then
+            scriptError(("runtime error: %s"):format(runError))
+        end
+    end
 end
