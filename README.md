@@ -1,8 +1,18 @@
-# Roblox Exploit Script (Educational Purpose Only)
+<div align="center">
+
+<img src="images/logos/logo+name.svg" alt="Volaris Logo" width="300">
+
+<br>
+<br>
+
+# Roblox Script Hub
+
+</div>
+
 
 ## ⚠️ Disclaimer
 
-**!! WARNING !!**
+> **!! WARNING !!**
 
 This script is created strictly for **educational and testing purposes only**.
 I do **not** encourage or promote exploiting in any Roblox game.
@@ -13,7 +23,7 @@ By using this script, you acknowledge that:
 * Exploiting may violate Roblox's Terms of Service.
 * Your account may be permanently banned, restricted, or otherwise penalized.
 
-I am **not responsible** for any consequences resulting from the use of this script.
+I am **not responsible for any consequences resulting from the use of this script**.
 
 If you do not agree with these terms, **do not use this script**.
 
@@ -21,12 +31,12 @@ If you do not agree with these terms, **do not use this script**.
 
 ## 📘 About
 
-This is the official GitHub repo for Volaris Hub, a Roblox exploit script hub.
+This is the official GitHub repo for **Volaris Hub**, a Roblox exploit script hub.
 
 * ALL scripts will never be paid and will never be locked behind a key.
-* ALL scripts will be made to a professional standard, with errors being kept to a minimum. (If you find a bug, report it here)
+* ALL scripts will be made to a professional standard, with errors being kept to a minimum. (If you find a bug, report it here.)
 
-I will try my best to add even more games to the list. Feel free to recommend a game and I will TRY my best to create a script for it (no guarantees).
+I will try my best to add even more games to the list. Feel free to recommend a game and I will **TRY** my best to create a script for it (no guarantees).
 
 ---
 
@@ -47,7 +57,7 @@ This script requires an executor that supports the following functions:
 * `getgenv`
 * `firetouchinterest`
 * `fireproximityprompt`
-* `getconnections` (optional but preferred)
+* `getconnections` *(optional but preferred)*
 
 ### 📌 Notes
 
@@ -67,9 +77,11 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/h
 
 ## 💗 Support Me
 
-Please consider liking the scripts on my account! It will help a TON by reaching out to more people as well as letting me know these scripts are helping others:
+Please consider liking the scripts on my account! It will help a **TON** by reaching out to more people as well as letting me know these scripts are helping others:
 
-<a href="https://rscripts.net/user/Fly" target="_blank"><img alt="Fly on Rscripts" loading="lazy" width="360" height="132" src="https://rscripts.net/api/embed/user/Fly?theme=dark" /></a>
+<a href="https://rscripts.net/user/Fly" target="_blank">
+  <img alt="Fly on Rscripts" loading="lazy" width="360" height="132" src="https://rscripts.net/api/embed/user/Fly?theme=dark" />
+</a>
 
 ---
 
