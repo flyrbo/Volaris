@@ -53,9 +53,7 @@ local LIBRARY_URLS = {
 local REQUIRED_FUNCTIONS = {
     { name = "loadstring", value = loadstring },
     { name = "HttpGet", value = game.HttpGet },
-    { name = "getgenv", value = getgenv },
-    { name = "firetouchinterest", value = firetouchinterest },
-    { name = "fireproximityprompt", value = fireproximityprompt },
+    { name = "getgenv", value = getgenv }
 }
 
 --// Generic helpers
