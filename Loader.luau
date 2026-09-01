@@ -18,7 +18,7 @@ Made by 			░▒▓████████▓▒░▒▓█▓▒░   ░▒
 
 Credits to Nebula Softworks © for the UI Library.
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.luau"))()
 
                       !!WARNING!!
 This script is created for educational and testing purposes only.
