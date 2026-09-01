@@ -70,7 +70,7 @@ This script requires an executor that supports the following functions:
 ## ⚙️ Usage
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.luau"))()
 ```
 
 ---
