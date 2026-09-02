@@ -9,14 +9,15 @@
      ▒▒▒       ▒▒▒▒▒▒  ▒▒▒▒▒  ▒▒▒▒▒▒▒▒ ▒▒▒▒▒     ▒▒▒▒▒ ▒▒▒▒▒▒     ▒▒▒▒▒   ▒▒▒▒▒   ▒▒▒▒▒▒▒▒ ▒▒▒▒▒▒▒▒  
                                                                                                      
 
-Made by 			░▒▓████████▓▒░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░ 
-				      ░▒▓█▓▒░      ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░ 
-				      ░▒▓█▓▒░      ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░ 
-				      ░▒▓██████▓▒░ ░▒▓█▓▒░    ░▒▓██████▓▒░  
-				      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░     
-				      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░     
-				      ░▒▓█▓▒░      ░▒▓████████▓▒░▒▓█▓▒░     
-                                      
+
+Made by									███████╗██╗  ██╗   ██╗
+										██╔════╝██║  ╚██╗ ██╔╝
+										█████╗  ██║   ╚████╔╝ 
+										██╔══╝  ██║    ╚██╔╝  
+										██║     ███████╗██║   
+										╚═╝     ╚══════╝╚═╝  
+                      
+
 Credits to Nebula Softworks © for the UI Library.
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.luau"))()
@@ -229,6 +230,9 @@ Global.Dropdowns.QueueDifficulty = Global.Dropdowns.QueueDifficulty or { "Normal
 Global.Toggles.Blatant = false
 Global.BlatantGen = Global.BlatantGen or 0
 Global.Toggles.Sprint = nil
+Global.Webhook = Global.Webhook or { url = "", template = "" }
+local Webhook = nil
+local BlatantToggle = nil
 
 local Stats = Global.Stats
 Stats.phase = Stats.phase or "idle"
@@ -489,7 +493,10 @@ local function ensureMirror()
 		}
 		Stats.lastBuiltAt = os.clock()
 		Visuals.OnBuilt(d.Plot)
-		if d.Active == true then refreshStatsFrom(plots[d.Plot]) end
+		if d.Active == true then
+			refreshStatsFrom(plots[d.Plot])
+			task.spawn(Webhook.onBuilt)
+		end
 	end)
 	conns[#conns + 1] = fillsEvent.OnClientEvent:Connect(function(plotName, fillBuf, filledCount, layerRemaining)
 		local s = plots[plotName]
@@ -529,6 +536,7 @@ local function ensureMirror()
 		Stats.coversDone += 1
 		if Global.Gallery then Global.Gallery.fetchedAt = 0 end
 		setPhase("cover finished")
+		task.spawn(Webhook.onCompleted)
 		task.delay(3, function()
 			if Global.Alive and Global.Toggles.AutoPaint and #Global.Values.Queue > 0 then
 				loadNextFromQueue()
@@ -1326,7 +1334,7 @@ local function paintLayer(s)
 		if n >= lastCount then
 			stalls += 1
 			if stalls >= stallLimit then
-				warn(("[Volaris] Colour %d not clearing (%d left); moving on"):format(layer, n))
+				warn(("[Volaris] Colour %d not clearing (%d left). moving on"):format(layer, n))
 				return
 			end
 			task.wait(0.3)
@@ -1422,14 +1430,12 @@ local function volumeInfo(entry)
 	return base, tonumber(vol)
 end
 
-local function refreshQueueDisplay()
-	if not QueueParagraph then return end
+local sessionSave
+
+local function queueSummaryLines()
 	local q = Global.Values.Queue
 	if #q == 0 then
-		pcall(function()
-			QueueParagraph:Set({Content = "(empty! queued covers load automatically when the current one finishes)"})
-		end)
-		return
+		return { "(empty! queued covers load automatically when the current one finishes)" }
 	end
 	local lines = {}
 	local i = 1
@@ -1459,6 +1465,13 @@ local function refreshQueueDisplay()
 		end
 		i = runEnd + 1
 	end
+	return lines
+end
+
+local function refreshQueueDisplay()
+	sessionSave()
+	if not QueueParagraph then return end
+	local lines = queueSummaryLines()
 	pcall(function()
 		QueueParagraph:Set({Content = table.concat(lines, "\n")})
 	end)
@@ -1741,10 +1754,16 @@ local function queueAdd(query, difficulty)
 	end
 	local diff = difficulty or "Normal"
 	local prior = fetchGallery()[item.CoverUrl .. "\0" .. diff]
-	if prior and not prior.InProgress then
-		local times = tonumber(prior.Count) or 1
-		queueNotify("Queue", ("\"%s\" is already in your gallery (%s).")
-			:format(item.Title, times > 1 and ("painted %d times"):format(times) or "completed"))
+	if prior then
+		if prior.InProgress then
+			local pct = tonumber(prior.Percent) or 0
+			queueNotify("Queue", ("You are already painting \"%s\" (%d%% done).")
+				:format(item.Title, pct))
+		else
+			local times = tonumber(prior.Count) or 1
+			queueNotify("Queue", ("\"%s\" is already in your gallery (%s).")
+				:format(item.Title, times > 1 and ("painted %d times"):format(times) or "completed"))
+		end
 		return false
 	end
 	for _, e in ipairs(Global.Values.Queue) do
@@ -1778,7 +1797,11 @@ local function filesystemWorks()
 	if type(makefolder) == "function" and type(writefile) == "function"
 		and type(readfile) == "function" then
 		pcall(function()
-			makefolder(sessionDir)
+			if type(isfolder) ~= "function" or not isfolder(sessionDir) then
+				makefolder(sessionDir)
+			end
+		end)
+		pcall(function()
 			local probe = sessionDir .. "/.probe"
 			writefile(probe, "vol_ok")
 			if readfile(probe) == "vol_ok" then
@@ -1793,7 +1816,7 @@ local function filesystemWorks()
 	return Session.fsOk
 end
 
-local function sessionSave()
+function sessionSave()
 	if not filesystemWorks() then return end
 	local ok = pcall(function()
 		writefile(sessionFile, game:GetService("HttpService"):JSONEncode({
@@ -1811,25 +1834,26 @@ local function sessionRestore()
 	if not filesystemWorks() then return end
 	local ok, raw = pcall(readfile, sessionFile)
 	if not ok or type(raw) ~= "string" then return end
-	if type(delfile) == "function" then
-		pcall(delfile, sessionFile)
-	end
 	local decoded
 	pcall(function()
 		decoded = game:GetService("HttpService"):JSONDecode(raw)
 	end)
-	if type(decoded) ~= "table" or type(decoded.time) ~= "number"
-		or os.time() - decoded.time > 600 then
+	if type(decoded) ~= "table" or type(decoded.time) ~= "number" then
 		return
 	end
+	local recent = os.time() - decoded.time <= 600
 	if type(decoded.queue) == "table" then
+		local gallery = fetchGallery()
 		for _, entry in ipairs(decoded.queue) do
 			if type(entry) == "table" and type(entry.CoverUrl) == "string" then
-				table.insert(Global.Values.Queue, entry)
+				local prior = gallery[entry.CoverUrl .. "\0" .. tostring(entry.Difficulty or "Normal")]
+				if not prior then
+					table.insert(Global.Values.Queue, entry)
+				end
 			end
 		end
 	end
-	if decoded.resume == true then
+	if recent and decoded.resume == true then
 		Global.Start()
 	end
 	pcall(refreshQueueDisplay)
@@ -1844,6 +1868,15 @@ loadNextFromQueue = function()
 	local q = Global.Values.Queue
 	if #q == 0 then return end
 	local entry = table.remove(q, 1)
+	local prior = fetchGallery()[entry.CoverUrl .. "\0" .. tostring(entry.Difficulty or "Normal")]
+	if prior then
+		queueNotify("Queue", prior.InProgress
+			and ("Skipping \"%s\" (still being painted)."):format(entry.Title)
+			or ("Skipping \"%s\" (already in your gallery)."):format(entry.Title))
+		refreshQueueDisplay()
+		queueLoadLock = 0
+		return loadNextFromQueue()
+	end
 	refreshQueueDisplay()
 	setPhase(("loading next cover: %s"):format(entry.Title))
 	local requestedAt = os.clock()
@@ -1879,6 +1912,486 @@ local function fmtDuration(sec)
 	if sec < 60 then return sec .. "s" end
 	if sec < 3600 then return ("%dm %02ds"):format(sec // 60, sec % 60) end
 	return ("%dh %02dm"):format(sec // 3600, (sec % 3600) // 60)
+end
+
+--//// Discord Webhook
+Webhook = {}
+do
+local hookCurrent
+local hookSessionStart = os.date("%Y-%m-%d %H:%M:%S")
+local HOOK_COLORS = {
+	active = 3447003,
+	completed = 3066993,
+	stopped = 15158332,
+	paused = 15938324,
+	ended = 9807270,
+}
+local HOOK_LINES = {
+	active = "▶️ | %d%% painted",
+	paused = "⏸ | %d%% (paused)",
+	stopped = "❌ | %d%% (stopped)",
+	completed = "✅ | %d%% (completed)",
+	ended = "⏹ | %d%% (session ended)",
+}
+
+local function hookStatus(text)
+	if Labels.Hook then
+		pcall(function()
+			Labels.Hook:Set({ Name = "Status: " .. text })
+		end)
+	end
+end
+
+local function hookEnabled()
+	return Global.Toggles.Webhook == true and (Global.Webhook.url or "") ~= ""
+end
+
+local function hookPct()
+	local total = Stats.total or 0
+	if total <= 0 then return 0 end
+	return math.floor((Stats.filled or 0) / total * 100 + 0.5)
+end
+
+local function hookHttp(opts)
+	if typeof(request) == "function" then
+		local ok, res = pcall(request, opts)
+		if ok and typeof(res) == "table" then
+			return true, res.Body or res.body or "", res.StatusCode or res.status_code or res.Status
+		end
+		return false, tostring(res), nil
+	end
+	if typeof(http_request) == "function" then
+		local ok, res = pcall(http_request, opts)
+		if ok and typeof(res) == "table" then
+			return true, res.Body or res.body or "", res.StatusCode or res.status_code or res.Status
+		end
+		return false, tostring(res), nil
+	end
+	if type(syn) == "table" and typeof(syn.request) == "function" then
+		local ok, res = pcall(syn.request, opts)
+		if ok and typeof(res) == "table" then
+			return true, res.Body or res.body or "", res.StatusCode or res.status_code or res.Status
+		end
+		return false, tostring(res), nil
+	end
+	local ok, res = pcall(function()
+		return game:GetService("HttpService"):RequestAsync(opts)
+	end)
+	if ok and typeof(res) == "table" then
+		return res.Success == true, res.Body, res.StatusCode
+	end
+	return false, tostring(res), nil
+end
+
+local function hookUrl()
+	return (Global.Webhook.url or ""):gsub("/+$", "")
+end
+
+local function hookIdentity()
+	local map = workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild("Plots")
+	local holder = Stats.plot and folder and folder:FindFirstChild(Stats.plot)
+	if not holder then return nil end
+	local thumb = holder:GetAttribute("CoverThumb")
+	local difficulty = holder:GetAttribute("Difficulty") or "Normal"
+	local title
+	for _, d in ipairs(holder:GetDescendants()) do
+		if d:IsA("TextLabel") then
+			local t = d.Text
+			if t:match("^Current Album:") then
+				t = t:match("^Current Album:%s*(.+)$") or ""
+			end
+			if t ~= "" and not t:match("^Fly %(") and not t:match("^Total Painted") then
+				if not title or #t > #title then
+					title = t
+				end
+			end
+		end
+	end
+	if not title or not thumb or thumb == "" then return nil end
+	local uuid = thumb:match("covers/([^/]+)/")
+	return {
+		title = title,
+		difficulty = difficulty,
+		thumb = thumb:gsub("%.256%.", ".512."),
+		url = uuid and ("https://mangadex.org/title/" .. uuid) or nil,
+	}
+end
+
+local function hookQueueText()
+	local lines = queueSummaryLines()
+	local out, size = {}, 0
+	for i, line in ipairs(lines) do
+		if size + #line + 1 > 980 and #out > 0 then
+			out[#out + 1] = ("...and %d more"):format(#lines - i + 1)
+			break
+		end
+		out[#out + 1] = line
+		size += #line + 1
+	end
+	return table.concat(out, "\n")
+end
+
+local HOOK_DEFAULT_TEMPLATE = [==[{"title":"{COVER_NAME}  |  {DIFFICULTY}","url":"{MANGADEX_URL}","color":{COLOR},"fields":[{"name":"🚀 | Progress","value":"{STATE}\n🔳 | {STUDS_PROGRESS} studs / {STUDS_REMAINING} studs\n🎨 | Colour {COLOUR_PROGRESS}","inline":true},{"name":"📊 | Stats","value":"⏳ | ETA: {OVERALL_COVER_ETA}\n⏳ | Colour ETA: {INCOLOR_ETA}\n🏃‍♂️ | Speed: {STUDS_PER_MINUTE}\n⌚ | Session: {SESSION_TIME}\n\n📃 | Covers Finished: {COVERS_FINISHED}","inline":true},{"name":"🔌 | Server","value":"👥 | Players: {PLAYERS_ON_SERVER_COUNT}\n🔘 | Blatant mode: {BLATANT_MODE}","inline":true},{"name":"📋 | Queue","value":"{QUEUE}"}],"image":{"url":"{COVER_IMAGE_URL}"},"footer":{"text":"session started: {SESSION_STARTED}"},"timestamp":{TIMESTAMP}}]==]
+local RAW_HOOK_TOKENS = { TIMESTAMP = true, COLOR = true }
+
+local function hookJsonEscape(v)
+	local s = tostring(v)
+	s = s:gsub("\\", "\\\\")
+	s = s:gsub('"', '\\"')
+	s = s:gsub("\n", "\\n")
+	s = s:gsub("\r", "\\r")
+	s = s:gsub("\t", "\\t")
+	return s
+end
+
+local function hookTokens(state, stopReason)
+	local id = hookIdentity()
+	local cur = hookCurrent
+	if not id and cur then
+		id = { title = cur.title, difficulty = cur.difficulty, thumb = cur.thumb, url = cur.url }
+	end
+	local filled = Stats.filled or 0
+	local total = Stats.total or 0
+	local pct = hookPct()
+	local speed = "--"
+	if (Stats.ratePerMin or 0) > 0 then
+		speed = ("%.0f studs/min"):format(Stats.ratePerMin)
+	end
+	return {
+		COVER_NAME = id and id.title or "Unknown cover",
+		DIFFICULTY = id and id.difficulty or "?",
+		MANGADEX_URL = id and id.url or "",
+		COVER_IMAGE_URL = id and id.thumb or "",
+		PROGRESS = tostring(pct),
+		STATE = (HOOK_LINES[state] or HOOK_LINES.active):format(pct),
+		STUDS_PROGRESS = tostring(filled),
+		STUDS_REMAINING = tostring(math.max(0, total - filled)),
+		COLOUR_PROGRESS = ("%d / %d (%d done)"):format(Stats.layer or 0, Stats.layerCount or 0, Stats.colorsDone or 0),
+		OVERALL_COVER_ETA = Stats.coverEta and fmtDuration(Stats.coverEta) or "--",
+		INCOLOR_ETA = Stats.layerEta and fmtDuration(Stats.layerEta) or "--",
+		STUDS_PER_MINUTE = speed,
+		SESSION_TIME = fmtDuration(Stats.activeSeconds or 0),
+		COVERS_FINISHED = tostring(Stats.coversDone or 0),
+		QUEUE = hookQueueText(),
+		PLAYERS_ON_SERVER_COUNT = tostring(#Players:GetPlayers()),
+		BLATANT_MODE = Global.Toggles.Blatant and "🟢 ON" or "🔴 OFF",
+		SESSION_STARTED = hookSessionStart,
+		ERROR = state == "stopped" and tostring(stopReason or "") or "",
+		TIMESTAMP = ('"%s"'):format(os.date("!%Y-%m-%dT%H:%M:%SZ")),
+		COLOR = tostring(HOOK_COLORS[state] or HOOK_COLORS.active),
+	}
+end
+
+local function hookFill(template, tokens)
+	local out = template:gsub("{([%w_]+)}", function(tok)
+		if tokens[tok] == nil then
+			return "{" .. tok .. "}"
+		end
+		if RAW_HOOK_TOKENS[tok] then
+			return tokens[tok]
+		end
+		return hookJsonEscape(tokens[tok])
+	end)
+	local ok, decoded = pcall(function()
+		return game:GetService("HttpService"):JSONDecode(out)
+	end)
+	if not ok or type(decoded) ~= "table" or type(decoded.fields) ~= "table" or #decoded.fields == 0 then
+		return nil
+	end
+	if decoded.image and decoded.image.url == "" then
+		decoded.image = nil
+	end
+	if decoded.url == "" then
+		decoded.url = nil
+	end
+	return decoded
+end
+
+local function hookEmbed(state, stopReason)
+	local template = Global.Webhook.template
+	if type(template) ~= "string" or template == "" then
+		template = HOOK_DEFAULT_TEMPLATE
+	end
+	local embed = hookFill(template, hookTokens(state, stopReason))
+	if embed then
+		if state == "stopped" and stopReason and not template:find("{ERROR}") then
+			embed.fields[#embed.fields + 1] = {
+				name = "⚠️ | Error",
+				value = ("```%s```"):format(tostring(stopReason):sub(1, 300)),
+			}
+		end
+		return embed
+	end
+	if template ~= HOOK_DEFAULT_TEMPLATE then
+		hookStatus("invalid template, using default")
+		embed = hookFill(HOOK_DEFAULT_TEMPLATE, hookTokens(state, stopReason))
+		if embed then
+			return embed
+		end
+	end
+	return {
+		title = "Volaris",
+		color = HOOK_COLORS[state] or HOOK_COLORS.active,
+		fields = { { name = "🚀 | State", value = tostring(state) } },
+		timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+	}
+end
+
+local function hookPayload(embed)
+	return game:GetService("HttpService"):JSONEncode({ embeds = { embed } })
+end
+
+local function hookPost(embed)
+	local url = hookUrl()
+	if url == "" then return nil end
+	local ok, body, code = hookHttp({
+		Url = url .. "?wait=true",
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = hookPayload(embed),
+	})
+	if ok and type(body) == "string" and body ~= "" then
+		local okJson, decoded = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(body)
+		end)
+		if okJson and type(decoded) == "table" and decoded.id then
+			return decoded.id
+		end
+	end
+	hookStatus(("send failed (%s) %s"):format(tostring(code), os.date("%H:%M:%S")))
+	return nil
+end
+
+local function hookPatch(messageId, embed)
+	local url = hookUrl()
+	if url == "" or not messageId then return false end
+	local ok, body, code = hookHttp({
+		Url = url .. "/messages/" .. messageId,
+		Method = "PATCH",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = hookPayload(embed),
+	})
+	if ok and (code == nil or code == 200 or code == 204) then
+		return true
+	end
+	hookStatus(("edit failed (%s) %s"):format(tostring(code), os.date("%H:%M:%S")))
+	return false
+end
+
+local hookFile = "VolarisHub/webhook.json"
+local hookSaved
+local hookRecordLoaded = false
+
+local function hookSaveRecord()
+	if not filesystemWorks() then return end
+	pcall(function()
+		writefile(hookFile, game:GetService("HttpService"):JSONEncode({
+			time = os.time(),
+			url = Global.Webhook.url,
+			message = hookCurrent and {
+				id = hookCurrent.id,
+				title = hookCurrent.title,
+				difficulty = hookCurrent.difficulty,
+				state = hookCurrent.state,
+			} or nil,
+		}))
+	end)
+end
+
+local function hookGetRecord()
+	if not hookRecordLoaded then
+		hookRecordLoaded = true
+		if filesystemWorks() then
+			local ok, raw = pcall(readfile, hookFile)
+			if ok and type(raw) == "string" then
+				local okDec, decoded = pcall(function()
+					return game:GetService("HttpService"):JSONDecode(raw)
+				end)
+				if okDec and type(decoded) == "table" and type(decoded.message) == "table"
+					and type(decoded.message.id) == "string"
+					and decoded.url == Global.Webhook.url then
+					hookSaved = decoded.message
+				end
+			end
+		end
+	end
+	return hookSaved
+end
+
+Webhook.alert = function(player, role, joinedNow, wasBlatant)
+	if not hookEnabled() then return end
+	task.spawn(function()
+		local avatar = nil
+		local okAv, res = hookHttp({
+			Url = ("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=150x150&format=Png&isCircular=false"):format(player.UserId),
+			Method = "GET",
+			Headers = { ["Content-Type"] = "application/json" },
+		})
+		if okAv and type(res) == "string" and res ~= "" then
+			local okJson, data = pcall(function()
+				return game:GetService("HttpService"):JSONDecode(res)
+			end)
+			if okJson and type(data) == "table" and type(data.data) == "table"
+				and data.data[1] and type(data.data[1].imageUrl) == "string" then
+				avatar = data.data[1].imageUrl
+			end
+		end
+		local display = tostring(player.DisplayName or player.Name)
+		local embed = {
+			title = "Staff detected",
+			color = 15158332,
+			thumbnail = avatar and { url = avatar } or nil,
+			fields = {
+				{
+					name = "👤 | Player",
+					value = ("**%s**%s\nID: %d\nRole: %s"):format(
+						tostring(player.Name),
+						display ~= tostring(player.Name) and (" (%s)"):format(display) or "",
+						player.UserId,
+						tostring(role)),
+					inline = true,
+				},
+				{
+					name = "⏱ | Timing",
+					value = ("Detected: %s\nJoined server: %s"):format(
+						os.date("%H:%M:%S"),
+						joinedNow and "just now" or "was already here"),
+					inline = true,
+				},
+				{
+					name = "🔘 | Blatant mode",
+					value = wasBlatant and "🟢 was ON (disabled automatically)" or "🔴 was off",
+				},
+				{
+					name = "🔌 | Server",
+					value = ("Job ID: `%s`\n👥 | Players: %d"):format(
+						game.JobId ~= "" and game.JobId or "unknown",
+						#Players:GetPlayers()),
+				},
+			},
+			footer = { text = "session started: " .. hookSessionStart },
+			timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+		}
+		hookPost(embed)
+	end)
+end
+
+function Webhook.onBuilt()
+	if not hookEnabled() then return end
+	local id = hookIdentity()
+	if not id then return end
+	local cur = hookCurrent
+	if cur and cur.state == "active" and cur.title == id.title and cur.difficulty == id.difficulty then
+		return
+	end
+	local saved = hookGetRecord()
+	if not cur and saved and saved.state == "active"
+		and saved.title == id.title and saved.difficulty == id.difficulty then
+		hookCurrent = {
+			id = saved.id,
+			title = saved.title,
+			difficulty = saved.difficulty,
+			thumb = id.thumb,
+			url = id.url,
+			state = "active",
+			lastEditAt = os.clock(),
+			lastMilestone = hookPct() // 10 * 10,
+		}
+		hookSaved = nil
+		hookStatus("reconnected to previous message " .. os.date("%H:%M:%S"))
+		return
+	end
+	local messageId = hookPost(hookEmbed("active"))
+	if messageId then
+		hookCurrent = {
+			id = messageId,
+			title = id.title,
+			difficulty = id.difficulty,
+			thumb = id.thumb,
+			url = id.url,
+			state = "active",
+			lastEditAt = os.clock(),
+			lastMilestone = hookPct() // 10 * 10,
+		}
+		hookSaveRecord()
+		hookStatus("cover message sent " .. os.date("%H:%M:%S"))
+	end
+end
+
+function Webhook.onCompleted()
+	local cur = hookCurrent
+	if not cur or cur.state ~= "active" or not hookEnabled() then return end
+	if hookPatch(cur.id, hookEmbed("completed")) then
+		cur.state = "completed"
+		cur.lastEditAt = os.clock()
+		cur.lastMilestone = 100
+		hookSaveRecord()
+		hookStatus("cover completed " .. os.date("%H:%M:%S"))
+	end
+end
+
+function Webhook.onStopped(reason)
+	local cur = hookCurrent
+	if not cur or cur.state ~= "active" or not hookEnabled() then return end
+	if hookPatch(cur.id, hookEmbed("stopped", tostring(reason or "unknown error"))) then
+		cur.state = "stopped"
+		hookSaveRecord()
+	end
+end
+
+function Webhook.onPaused()
+	local cur = hookCurrent
+	if not cur or cur.state ~= "active" or not hookEnabled() then return end
+	if hookPatch(cur.id, hookEmbed("paused")) then
+		cur.state = "paused"
+		hookSaveRecord()
+	end
+end
+
+function Webhook.sessionEnd()
+	local cur = hookCurrent
+	if not cur or (cur.state ~= "active" and cur.state ~= "paused") then return end
+	if (Global.Webhook.url or "") == "" then return end
+	local embed = hookEmbed("ended")
+	local messageId = cur.id
+	cur.state = "ended"
+	hookSaveRecord()
+	task.spawn(function()
+		if hookPatch(messageId, embed) then
+			hookStatus("session ended " .. os.date("%H:%M:%S"))
+		end
+	end)
+end
+
+function Webhook.loop()
+	while Global.Alive do
+		task.wait(5)
+		if not hookEnabled() then continue end
+		local cur = hookCurrent
+		if not cur then
+			if Global.Toggles.AutoPaint and hookIdentity() then
+				Webhook.onBuilt()
+			end
+			continue
+		end
+		if cur.state ~= "active" or not Global.Toggles.AutoPaint then continue end
+		local now = os.clock()
+		local pct = hookPct()
+		if now - cur.lastEditAt >= 60 or pct >= cur.lastMilestone + 10 then
+			if hookPatch(cur.id, hookEmbed("active")) then
+				cur.lastEditAt = now
+				cur.lastMilestone = math.floor(pct / 10) * 10
+				hookStatus("edited " .. os.date("%H:%M:%S"))
+			end
+		end
+	end
+end
+
+Webhook.status = hookStatus
+Webhook.post = hookPost
+Webhook.embed = hookEmbed
+Webhook.Template = HOOK_DEFAULT_TEMPLATE
 end
 
 local Features = {}
@@ -1949,8 +2462,13 @@ Features.AutoPaint = function()
 	pcall(function() if hum then hum.WalkSpeed = 16 end end)
 	setPhase(Global.Alive and "paused" or "stopped")
 
+	if ok and Global.Alive and not Global.Toggles.AutoPaint then
+		task.spawn(Webhook.onPaused)
+	end
+
 	if not ok then
 		warn("[Volaris] engine error: " .. tostring(err))
+		task.spawn(Webhook.onStopped, tostring(err))
 		pcall(function()
 			Starlight:Notification({
 				Title = "Volaris Hub",
@@ -2006,6 +2524,9 @@ Features.StatLoop = function()
 		local coverEta = (ratePerMin > 1 and coverLeft > 0)
 			and (coverLeft / ratePerMin * 60) or nil
 		local pct = (Stats.total > 0) and (Stats.filled / Stats.total * 100) or 0
+		Stats.ratePerMin = ratePerMin
+		Stats.layerEta = layerEta
+		Stats.coverEta = coverEta
 
 		pcall(function()
 			if Labels.Phase then Labels.Phase:Set({Name = "Status: " .. tostring(Stats.phase)}) end
@@ -2182,7 +2703,7 @@ local function hopAway(reason)
 		end)
 		if not okTeleport then
 			warn("[Volaris] server hop: teleport failed: " .. tostring(err))
-			setPhase("hop failed — teleport error")
+			setPhase("hop failed! teleport error")
 		end
 	else
 		setPhase("hop failed. no server picked")
@@ -2190,37 +2711,86 @@ local function hopAway(reason)
 	hopBusy = false
 end
 
-Features.StaffHop = function()
-	if Global.Running.StaffHop then return end
-	Global.Running.StaffHop = true
+local function disableBlatantAuto()
+	if not Global.Toggles.Blatant then return end
+	if BlatantToggle and BlatantToggle.Values then
+		Global.BlatantAutoRequest = true
+		pcall(function()
+			BlatantToggle:Set({ CurrentValue = false })
+		end)
+		Global.BlatantAutoRequest = nil
+	else
+		Global.Toggles.Blatant = false
+		Global.BlatantGen = (Global.BlatantGen or 0) + 1
+	end
+end
 
-	local function check(player)
-		if player == LP or not Global.Toggles.StaffHop then return end
+Features.StaffWatch = function()
+	if Global.Running.StaffWatch then return end
+	Global.Running.StaffWatch = true
+
+	local function check(player, joinedNow)
+		if player == LP then return end
 		task.spawn(function()
 			local role = roleInStaffGroup(player)
-			if not (Global.Toggles.StaffHop and role) then return end
-			if staffRoleNames[role:lower()] then
+			if not role or not staffRoleNames[role:lower()] then return end
+			local wasBlatant = Global.Toggles.Blatant == true
+			if wasBlatant then
+				disableBlatantAuto()
+			end
+			task.spawn(Webhook.alert, player, role, joinedNow, wasBlatant)
+			if Global.Toggles.StaffHop then
 				hopAway(("%s — %s"):format(player.Name, role))
+			elseif joinedNow then
+				setPhase(("staff joined: %s"):format(player.Name))
+			else
+				setPhase(("staff in server: %s"):format(player.Name))
 			end
 		end)
 	end
 
 	for _, player in ipairs(Players:GetPlayers()) do
-		check(player)
+		if Global.Toggles.StaffHop then
+			check(player, false)
+		end
 	end
-	Global.Connections.StaffHop = Players.PlayerAdded:Connect(check)
-
-	task.spawn(function()
-		while Global.Toggles.StaffHop do
-			task.wait(0.5)
-		end
-		local conn = Global.Connections.StaffHop
-		if conn then
-			pcall(function() conn:Disconnect() end)
-			Global.Connections.StaffHop = nil
-		end
-		Global.Running.StaffHop = false
+	Global.Connections.StaffWatch = Players.PlayerAdded:Connect(function(player)
+		check(player, true)
 	end)
+end
+
+Features.StaffHop = function()
+	if Global.Running.StaffHop then return end
+	Global.Running.StaffHop = true
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LP and Global.Toggles.StaffHop then
+			task.spawn(function()
+				local role = roleInStaffGroup(player)
+				if Global.Toggles.StaffHop and role and staffRoleNames[role:lower()] then
+					hopAway(("%s — %s"):format(player.Name, role))
+				end
+			end)
+		end
+	end
+	Global.Running.StaffHop = false
+end
+
+Features.Smart = function()
+	if Global.Running.Smart then return end
+	Global.Running.Smart = true
+	while Global.Toggles.Smart and Global.Alive do
+		local alone = #Players:GetPlayers() <= 1
+		if (alone and not Global.Toggles.Blatant)
+			or (not alone and Global.Toggles.Blatant) then
+			Global.BlatantAutoRequest = true
+			pcall(function()
+				BlatantToggle:Set({ CurrentValue = alone })
+			end)
+			Global.BlatantAutoRequest = nil
+		end
+		task.wait(2)
+	end
+	Global.Running.Smart = false
 end
 
 --//// Canvas Render Throttle
@@ -3166,6 +3736,7 @@ local function stopConnections()
 end
 
 local function shutdown()
+	pcall(Webhook.sessionEnd)
 	Global.Alive = false
 	for key in pairs(Global.Toggles) do
 		Global.Toggles[key] = false
@@ -3233,9 +3804,15 @@ end
 
 Global.Unload = unload
 
+sessionRestore()
+
 --// Interface
 
 --//// Window
+pcall(function()
+	Starlight.FileSystem.Folder = "VolarisHub"
+end)
+
 Starlight:SetTheme("Orca")
 
 local Window = Starlight:CreateWindow({
@@ -3245,7 +3822,7 @@ local Window = Starlight:CreateWindow({
 	LoadingEnabled = true,
 	LoadingSettings = { Title = "Volaris Hub", Subtitle = "loading engine..." },
 	FileSettings = {
-		RootFolder = "VolarisHub",
+		RootFolder = ".",
 		ConfigFolder = "Paint a Manga",
 		ThemesInRoot = true,
 	},
@@ -3261,9 +3838,12 @@ Window:CreateHomeTab({
 	UnsupportedExecutors = {},
 	Changelog = {
 		{
-			Title = "v1.0.0: Release!!!",
-			Date = "31st August 2026",
-			Description = "After so long its finally out. Not sure what else to add here tho."
+			Title = "v1.1.0: Webhooks!",
+			Date = "2nd September 2026",
+			Description = "Added webhook integration along with bug fixes on the queue system."
+			.. "Also added a dedicated workspace folder for Volaris. All previously made configs "
+			.. "are automatically moved to the new folder. Added a Smart mode feature as well as "
+			.. "more safety measures upon staff join."
 		}
 	},
 })
@@ -3272,7 +3852,7 @@ Window:CreateHomeTab({
 local Main = Window:CreateTabSection("Main")
 
 local PainterTab = Main:CreateTab({
-	Name = "Painter",
+	Name = "Main",
 	Icon = NebulaIcons:GetIcon("brush", "Material"),
 	Columns = 2,
 }, "PM_TAB_PAINTER")
@@ -3283,7 +3863,6 @@ local AutoPaintToggle = ControlBox:CreateToggle({
 	Tooltip = "Walks to every green stud of every Colour until the cover is done.",
 	CurrentValue = false,
 	Style = 2,
-	IgnoreConfig = true,
 	Callback = function(value)
 		Global.Toggles.AutoPaint = value
 		if value then
@@ -3297,18 +3876,6 @@ AutoPaintToggle:AddBind({
 	Callback = function(value)
 	end,
 }, "PM_BIND_AUTOPAINT")
-task.delay(1, function()
-	pcall(function()
-		local inst = AutoPaintToggle.Instance
-		if inst and not inst:FindFirstChild("Header") then
-			local header = Instance.new("Frame")
-			header.Name = "Header"
-			header.Size = UDim2.fromOffset(0, 20)
-			header.BackgroundTransparency = 1
-			header.Parent = inst
-		end
-	end)
-end)
 
 local MoveBox = PainterTab:CreateGroupbox({ Name = "Movement", Column = 1 }, "PM_BOX_MOVE")
 MoveBox:CreateSlider({
@@ -3325,15 +3892,39 @@ MoveBox:CreateSlider({
 }, "PM_SLIDER_WALKSPEED")
 
 local BlatantBox = PainterTab:CreateGroupbox({ Name = "Blatant", Column = 1 }, "PM_BOX_BLATANT")
-local BlatantToggle = BlatantBox:CreateToggle({
+BlatantToggle = BlatantBox:CreateToggle({
 	Name = "Blatant Mode (adaptive teleport)",
-	Tooltip = "USE AT YOUR OWN RISK. Teleports between stud clusters instead of walking. "
+	Tooltip = "USE AT YOUR OWN RISK. Teleports between stud clusters instead of walking.\n"
 		.. "The server accepts it today, but it is obvious to anyone watching and "
 		.. "far more likely to be flagged if the game ever adds position validation.",
 	CurrentValue = false,
 	Style = 1,
 	IgnoreConfig = true,
 	Callback = function(value)
+		if Global.BlatantAutoRequest then
+			Global.BlatantAutoRequest = nil
+			Global.Toggles.Blatant = value
+			Global.BlatantGen = (Global.BlatantGen or 0) + 1
+			return
+		end
+		if Global.Toggles.Smart then
+			task.defer(function()
+				Global.BlatantAutoRequest = true
+				pcall(function()
+					BlatantToggle:Set({ CurrentValue = Global.Toggles.Blatant })
+				end)
+				Global.BlatantAutoRequest = nil
+			end)
+			pcall(function()
+				Starlight:Notification({
+					Title = "Volaris Hub",
+					Content = "Blatant mode is managed by Smart mode.",
+					Icon = NebulaIcons:GetIcon("circle-alert", "Lucide"),
+					Duration = 5,
+				}, "PM_SMART_NOTE")
+			end)
+			return
+		end
 		if value then
 			pcall(function()
 				Window:PromptDialog({
@@ -3373,6 +3964,19 @@ local BlatantToggle = BlatantBox:CreateToggle({
 		end
 	end,
 }, "PM_TOGGLE_BLATANT")
+BlatantBox:CreateToggle({
+	Name = "Smart mode",
+	Tooltip = "Turns Blatant mode on automatically while you are alone in the server and off the moment someone joins.\n"
+		.. "While enabled, the Blatant toggle is managed automatically and locked.",
+	CurrentValue = false,
+	Style = 2,
+	Callback = function(value)
+		Global.Toggles.Smart = value
+		if value then
+			task.spawn(Features.Smart)
+		end
+	end,
+}, "PM_TOGGLE_SMART")
 
 local StatsBox = PainterTab:CreateGroupbox({
 	Name = "Statistics",
@@ -3401,24 +4005,6 @@ AboutBox:CreateParagraph({
 		.. "to input a specific volume, type the series name then \"vol N\` or \`vol. N\` or \`volume N\` where N is the volume number.\n"
 		.. "to add a specific translation, type the series name then a language code or name in brackets, e.g. \`[en]\` or \`english\`.\n\n"
 		.. "should look like this: \`frieren vol 2 [en]\` or \`frieren vol. 2 english\`."
-	-- Content = "Titles are MangaDex series names — the same search the game's "
-	-- 	.. "own Search screen uses, so anything that works in-game (or on "
-	-- 	.. "mangadex.org) works here.\n"
-	-- 	.. "The Add Cover box below holds the title input, the difficulty "
-	-- 	.. "dropdown and both add buttons — typing never adds anything by "
-	-- 	.. "itself.\n"
-	-- 	.. "• \"frieren\" queues the first result; \"frieren vol 2\" queues "
-	-- 	.. "exactly Vol. 2. The notification always shows the exact pick.\n"
-	-- 	.. "• Add a language after the name — \"frieren en\", \"frieren [en]\" "
-	-- 	.. "or \"frieren english\" — to queue that translation. With no "
-	-- 	.. "language, whichever translation has the most volumes available "
-	-- 	.. "is picked automatically — the confirmation shows which won.\n"
-	-- 	.. "• \"Add All Volumes\" ignores any volume typed in the input: it "
-	-- 	.. "searches every volume of the series and queues them in "
-	-- 	.. "numerical order after a confirmation pop-up, skipping volumes "
-	-- 	.. "already painted or queued.\n"
-	-- 	.. "• Covers already in your gallery are rejected automatically; "
-	-- 	.. "in-progress drafts are allowed.",
 }, "PM_PARA_QHOW")
 
 local AddBox = QueueTab:CreateGroupbox({ Name = "Add Cover", Column = 1 }, "PM_BOX_QADD")
@@ -3431,6 +4017,7 @@ local TitleInput = AddBox:CreateInput({
 	CurrentValue = Global.Values.QTitle,
 	RemoveTextAfterFocusLost = false,
 	MaxCharacters = 80,
+	IgnoreConfig = true,
 	Callback = function(text)
 		Global.Values.QTitle = text
 	end,
@@ -3473,12 +4060,16 @@ local function queueAddAll(query, difficulty)
 			queued[e.CoverUrl] = true
 		end
 	end
-	local fresh, skippedPainted, skippedQueued = {}, 0, 0
+	local fresh, skippedPainted, skippedQueued, skippedPainting = {}, 0, 0, 0
 	for _, v in ipairs(list) do
 		local r = v.result
 		local prior = gallery[r.CoverUrl .. "\0" .. diff]
-		if prior and not prior.InProgress then
-			skippedPainted += 1
+		if prior then
+			if prior.InProgress then
+				skippedPainting += 1
+			else
+				skippedPainted += 1
+			end
 		elseif queued[r.CoverUrl] then
 			skippedQueued += 1
 		else
@@ -3486,7 +4077,7 @@ local function queueAddAll(query, difficulty)
 		end
 	end
 	if #fresh == 0 then
-		queueNotify("Queue", ("Every volume of \"%s\" is already queued or painted (%s).")
+		queueNotify("Queue", ("Every volume of \"%s\" is already queued, painted, or in progress (%s).")
 			:format(series, diff))
 		return false
 	end
@@ -3505,10 +4096,10 @@ local function queueAddAll(query, difficulty)
 		Window:PromptDialog({
 			Name = "Add all volumes",
 			Content = ("Queue %d %s of \"%s\"%s as %s?\n"
-				.. "Skipped automatically: %d painted, %d already queued%s.\n"
+				.. "Skipped automatically: %d painted, %d in progress, %d already queued%s.\n"
 				.. "They load one after another automatically.")
 				:format(#fresh, plural, series, langTag, diff,
-					skippedPainted, skippedQueued,
+					skippedPainted, skippedPainting, skippedQueued,
 					missing > 0
 						and (", %d volumes only exist in other translations"):format(missing)
 						or ""),
@@ -3531,6 +4122,9 @@ local function queueAddAll(query, difficulty)
 						local extra = ""
 						if skippedPainted > 0 then
 							extra = extra .. (", %d already painted"):format(skippedPainted)
+						end
+						if skippedPainting > 0 then
+							extra = extra .. (", %d in progress"):format(skippedPainting)
 						end
 						if skippedQueued > 0 then
 							extra = extra .. (", %d already queued"):format(skippedQueued)
@@ -3569,7 +4163,7 @@ AddBox:CreateButton({
 	Name = "Add All Volumes",
 	Tooltip = "Searches every volume of the title and adds to the queue.\n"
 		.. "Any \"vol N\" in the input is ignored.\n"
-		.. "Volumes already painted or queued are skipped.",
+		.. "Volumes already painted, in progress, or queued are skipped.",
 	IndicatorStyle = 1,
 	Callback = function()
 		local query = Global.Values.QTitle
@@ -3605,82 +4199,6 @@ QueueBox:CreateButton({
 refreshQueueDisplay()
 
 --//// Misc Tab
-local MiscTab = Main:CreateTab({
-	Name = "Misc",
-	Icon = NebulaIcons:GetIcon("puzzle", "Lucide"),
-	Columns = 2,
-}, "PM_TAB_MISC")
-
-local GenMoveBox = MiscTab:CreateGroupbox({ Name = "Movement", Column = 1 }, "PM_BOX_GENMOVE")
-GenMoveBox:CreateSlider({
-	Name = "WalkSpeed",
-	Tooltip = "General character speed outside of painting.\nThe painting speed is separate (Painter tab).",
-	Range = { 16, 52 },
-	Increment = 1,
-	Suffix = "",
-	CurrentValue = Global.Values.GeneralWalkSpeed,
-	Callback = function(value)
-		Global.Values.GeneralWalkSpeed = value
-		if Global.Toggles.GeneralSpeed and not Global.Toggles.AutoPaint then
-			local _, hum = getChar()
-			if hum then hum.WalkSpeed = value end
-		end
-	end,
-}, "PM_SLIDER_GENWALK")
-GenMoveBox:CreateToggle({
-	Name = "Apply Always",
-	Tooltip = "Keeps the general WalkSpeed applied while you walk around.\nPainting speed takes over automatically while Auto Paint runs.",
-	CurrentValue = false,
-	Style = 2,
-	Callback = function(value)
-		Global.Toggles.GeneralSpeed = value
-		if value then
-			task.spawn(Features.GeneralSpeed)
-		end
-	end,
-}, "PM_TOGGLE_GENSPEED")
-
-local AfkBox = MiscTab:CreateGroupbox({ Name = "Anti-AFK", Column = 1 }, "PM_BOX_AFK")
-AfkBox:CreateToggle({
-	Name = "Anti-AFK",
-	Tooltip = "Prevents the game's idle disconnect.",
-	CurrentValue = false,
-	Style = 2,
-	Callback = function(value)
-		Global.Toggles.AntiAFK = value
-		if value then
-			task.spawn(Features.AntiAFK)
-		end
-	end,
-}, "PM_TOGGLE_ANTIAFK")
-
-local HopBox = MiscTab:CreateGroupbox({ Name = "Server Hop", Column = 2 }, "PM_BOX_HOP")
-HopBox:CreateParagraph({
-	Name = "Staff watch",
-	Content = "Looks out for staff/important members and hops server upon detection.",
-}, "PM_PARA_HOPINFO")
-HopBox:CreateToggle({
-	Name = "Hop on staff presence",
-	Tooltip = "Enabling also scans the players already in this server, not just joins.",
-	CurrentValue = false,
-	Style = 2,
-	IgnoreConfig = true,
-	Callback = function(value)
-		Global.Toggles.StaffHop = value
-		if value then
-			task.spawn(Features.StaffHop)
-		end
-	end,
-}, "PM_TOGGLE_STAFFHOP")
-HopBox:CreateButton({
-	Name = "Hop now",
-	Tooltip = "Immediately hops to another public server (manual escape / test).",
-	IndicatorStyle = 2,
-	Callback = function()
-		hopAway("manual hop")
-	end,
-}, "PM_BTN_HOPNOW")
-
 --//// Visuals Tab
 local VisualsTab = Main:CreateTab({
 	Name = "Visuals",
@@ -3815,6 +4333,198 @@ TracerBox:CreateInput({
 	end,
 }, "PM_INPUT_TTHR")
 
+local MiscTab = Main:CreateTab({
+	Name = "Misc",
+	Icon = NebulaIcons:GetIcon("puzzle", "Lucide"),
+	Columns = 2,
+}, "PM_TAB_MISC")
+
+local GenMoveBox = MiscTab:CreateGroupbox({ Name = "Movement", Column = 1 }, "PM_BOX_GENMOVE")
+GenMoveBox:CreateSlider({
+	Name = "WalkSpeed",
+	Tooltip = "General character speed outside of painting.\nThe painting speed is separate (Main tab).",
+	Range = { 16, 52 },
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = Global.Values.GeneralWalkSpeed,
+	Callback = function(value)
+		Global.Values.GeneralWalkSpeed = value
+		if Global.Toggles.GeneralSpeed and not Global.Toggles.AutoPaint then
+			local _, hum = getChar()
+			if hum then hum.WalkSpeed = value end
+		end
+	end,
+}, "PM_SLIDER_GENWALK")
+GenMoveBox:CreateToggle({
+	Name = "Apply Always",
+	Tooltip = "Keeps the general WalkSpeed applied while you walk around.\nPainting speed takes over automatically while Auto Paint runs.",
+	CurrentValue = false,
+	Style = 2,
+	Callback = function(value)
+		Global.Toggles.GeneralSpeed = value
+		if value then
+			task.spawn(Features.GeneralSpeed)
+		end
+	end,
+}, "PM_TOGGLE_GENSPEED")
+
+local AfkBox = MiscTab:CreateGroupbox({ Name = "Anti-AFK", Column = 1 }, "PM_BOX_AFK")
+AfkBox:CreateToggle({
+	Name = "Anti-AFK",
+	Tooltip = "Prevents the game's idle disconnect.",
+	CurrentValue = false,
+	Style = 2,
+	Callback = function(value)
+		Global.Toggles.AntiAFK = value
+		if value then
+			task.spawn(Features.AntiAFK)
+		end
+	end,
+}, "PM_TOGGLE_ANTIAFK")
+
+local HopBox = MiscTab:CreateGroupbox({ Name = "Server Hop", Column = 2 }, "PM_BOX_HOP")
+HopBox:CreateParagraph({
+	Name = "Staff watch",
+	Content = "Looks out for staff/important members and hops server upon detection.",
+}, "PM_PARA_HOPINFO")
+HopBox:CreateToggle({
+	Name = "Hop on staff presence",
+	Tooltip = "Enabling also scans the players already in this server, not just joins.",
+	CurrentValue = false,
+	Style = 2,
+	Callback = function(value)
+		Global.Toggles.StaffHop = value
+		if value then
+			task.spawn(Features.StaffHop)
+		end
+	end,
+}, "PM_TOGGLE_STAFFHOP")
+HopBox:CreateButton({
+	Name = "Hop now",
+	Tooltip = "Immediately hops to another public server (manual escape / test).",
+	IndicatorStyle = 2,
+	Callback = function()
+		hopAway("manual hop")
+	end,
+}, "PM_BTN_HOPNOW")
+
+--//// Webhook Tab
+local HookTab = Main:CreateTab({
+	Name = "Webhook",
+	Icon = NebulaIcons:GetIcon("webhook", "Lucide"),
+	Columns = 2,
+}, "PM_TAB_WEBHOOK")
+
+local HookBox = HookTab:CreateGroupbox({ Name = "Webhook", Column = 1 }, "PM_BOX_HOOK")
+
+HookBox:CreateInput({
+	Name = "Webhook URL",
+	Tooltip = "Paste a Discord webhook URL.",
+	PlaceholderText = "https://discord.com/api/webhooks/...",
+	CurrentValue = Global.Webhook.url,
+	RemoveTextAfterFocusLost = false,
+	MaxCharacters = 200,
+	Callback = function(text)
+		Global.Webhook.url = text
+	end,
+}, "PM_INPUT_HOOKURL")
+
+HookBox:CreateToggle({
+	Name = "Enable Webhook",
+	Tooltip = "Posts a message during events like cover loads, server hops, etc.",
+	CurrentValue = false,
+	Callback = function(value)
+		Global.Toggles.Webhook = value
+		if value and (Global.Webhook.url or "") == "" then
+			Webhook.status("no webhook URL set")
+			pcall(function()
+				Starlight:Notification({
+					Title = "Volaris Hub",
+					Content = "Paste a webhook URL to start posting.",
+					Icon = NebulaIcons:GetIcon("circle-alert", "Lucide"),
+					Duration = 6,
+				}, "PM_HOOK_NOTE")
+			end)
+		end
+	end,
+}, "PM_TOGGLE_HOOK")
+
+Labels.Hook = HookBox:CreateLabel({ Name = "Status: idle" }, "PM_LBL_HOOK")
+
+local TemplateBox = HookTab:CreateGroupbox({ Name = "Embed Template", Column = 2 }, "PM_BOX_HOOKTPL")
+
+TemplateBox:CreateParagraph({
+	Name = "Tokens",
+	Content = "Tokens:\n"
+		.. "{COVER_NAME} + {DIFFICULTY} - loaded cover\n"
+		.. "{MANGADEX_URL} - manga page link\n"
+		.. "{COVER_IMAGE_URL} - cover image\n"
+		.. "{STATE} - status line, flips per state\n"
+		.. "{COLOR} - embed colour per state (raw)\n"
+		.. "{PROGRESS} - overall percent\n"
+		.. "{STUDS_PROGRESS} / {STUDS_REMAINING}\n"
+		.. "{COLOUR_PROGRESS} - current colour\n"
+		.. "{OVERALL_COVER_ETA} / {INCOLOR_ETA}\n"
+		.. "{STUDS_PER_MINUTE} - painting speed\n"
+		.. "{SESSION_TIME} / {SESSION_STARTED}\n"
+		.. "{COVERS_FINISHED} - this session\n"
+		.. "{QUEUE} - queued covers\n"
+		.. "{PLAYERS_ON_SERVER_COUNT}\n"
+		.. "{BLATANT_MODE} - ON/OFF state\n"
+		.. "{TIMESTAMP} - edit time (raw)\n"
+		.. "{ERROR} - error reason when stopped\n"
+		.. "Empty template = built-in default.",
+}, "PM_PARA_HOOKTOKENS")
+
+TemplateBox:CreateButton({
+	Name = "Copy Template",
+	Tooltip = "Copies your embed template (or the built-in default) to the clipboard as minified JSON. "
+		.. "Edit it in any text editor and paste it back into Embed Template.",
+	IndicatorStyle = 1,
+	Callback = function()
+		local tpl = Global.Webhook.template
+		if type(tpl) ~= "string" or tpl == "" then
+			tpl = Webhook.Template
+		end
+		if typeof(setclipboard) == "function" then
+			pcall(setclipboard, tpl)
+			Webhook.status("template copied " .. os.date("%H:%M:%S"))
+		else
+			Webhook.status("clipboard unavailable on this executor")
+		end
+	end,
+}, "PM_BTN_HOOKCOPY")
+
+TemplateBox:CreateInput({
+	Name = "Embed Template",
+	Tooltip = "Optional. Minified embed JSON with tokens like {COVER_NAME}, {QUEUE}, {STATE}, {COLOR}. "
+		.. "Leave empty to use the built-in default.",
+	PlaceholderText = "minified embed JSON (empty = default)",
+	CurrentValue = Global.Webhook.template,
+	RemoveTextAfterFocusLost = false,
+	MaxCharacters = 4000,
+	Callback = function(text)
+		Global.Webhook.template = text
+	end,
+}, "PM_INPUT_HOOKTEMPLATE")
+
+TemplateBox:CreateButton({
+	Name = "Send Test",
+	Tooltip = "Posts the current embed as a one-off preview without linking it to this session.",
+	IndicatorStyle = 1,
+	Callback = function()
+		task.spawn(function()
+			if (Global.Webhook.url or "") == "" then
+				Webhook.status("no webhook URL set")
+				return
+			end
+			if Webhook.post(Webhook.embed("active")) then
+				Webhook.status("test sent " .. os.date("%H:%M:%S"))
+			end
+		end)
+	end,
+}, "PM_BTN_HOOKTEST")
+
 --//// Settings Tab
 local SettingsTab = Main:CreateTab({
 	Name = "Settings",
@@ -3827,10 +4537,36 @@ SettingsTab:CreateGroupbox({ Name = "Control", Column = 1 }, "PM_BOX_CONTROL2"):
 	Name = "Unload",
 	Tooltip = "Completely removes the script, engine and UI.",
 	IndicatorStyle = 2,
-	Callback = unload,
+	Callback = function()
+		task.delay(0.1, unload)
+	end,
 }, "PM_BTN_UNLOAD")
 
 --// Autoloads
+local oldSuite = "Starlight Interface Suite/VolarisHub"
+if typeof(isfolder) == "function" and isfolder(oldSuite) then
+	local function migrateTree(src, dst)
+		if not isfolder(dst) and typeof(makefolder) == "function" then
+			pcall(makefolder, dst)
+		end
+		for _, path in ipairs(listfiles(src)) do
+			path = path:gsub("[/\\]+$", "")
+			local name = string.match(path, "[^/\\]+$")
+			if name and name ~= "" then
+				if isfolder(path) then
+					migrateTree(path, dst .. "/" .. name)
+				elseif isfile(path) and not isfile(dst .. "/" .. name) then
+					local okRead, data = pcall(readfile, path)
+					if okRead then
+						pcall(writefile, dst .. "/" .. name, data)
+					end
+				end
+			end
+		end
+	end
+	pcall(migrateTree, oldSuite, "VolarisHub")
+end
+
 Starlight:LoadAutoloadTheme()
 
 task.spawn(Features.StatLoop)
@@ -3839,10 +4575,13 @@ Starlight:LoadAutoloadConfig()
 
 task.spawn(Features.CanvasFix)
 
+task.spawn(Features.StaffWatch)
+
+task.spawn(Webhook.loop)
+
 task.spawn(function()
 	actorAvailable()
 end)
-sessionRestore()
 
 Starlight:Notification({
 	Title = "Volaris Hub",
