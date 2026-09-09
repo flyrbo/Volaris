@@ -55,9 +55,8 @@ This script requires an executor that supports the following functions:
 * `loadstring`
 * `game:HttpGet`
 * `getgenv`
-* `firetouchinterest`
-* `fireproximityprompt`
-* `getconnections` *(optional but preferred)*
+
+And many more that are optional but preferred/recommended to have (please see the script details for more info on the script's requirements itself)
 
 ### 📌 Notes
 
