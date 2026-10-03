@@ -45,19 +45,22 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 --// Configuration
 
 --//// Game
-local placeId = 100248945884133
-local pixelSize = 1 / 3
-local brushStuds = 2
-local flatMask = Vector3.new(1, 0, 1)
-local maxRounds = 8
-local stallLimit = 4
-local jumpDist = 20
-local twoOptMax = 1500
-local bandDenseFrac = 0.3
-local bandMinRows = 3
-local bandMinCount = 40
-local bandMinRowCount = 4
-local bandTurnTime = 0.35
+local Config = {
+	placeId = 100248945884133,
+	pixelSize = 1 / 3,
+	brushStuds = 2,
+	flatMask = Vector3.new(1, 0, 1),
+	maxRounds = 8,
+	stallLimit = 4,
+	jumpDist = 20,
+	twoOptMax = 1500,
+	bandDenseFrac = 0.3,
+	bandMinRows = 3,
+	bandMinCount = 40,
+	bandMinRowCount = 4,
+	bandTurnTime = 0.35,
+}
+
 
 --//// URLs
 local libraryUrls = {
@@ -117,6 +120,8 @@ genv.Volaris = genv.Volaris or {}
 Volaris = genv.Volaris
 
 --//// Library Init
+local NebulaIcons, okStarlight, Starlight
+do
 getgenv().InterfaceName = "PaintMangaHub"
 
 local libCache = "VolarisHub/libs"
@@ -217,7 +222,7 @@ local function bootLib(key, urls)
 	return false, lastErr
 end
 
-local okStarlight, Starlight = bootLib("starlight", {
+okStarlight, Starlight = bootLib("starlight", {
 	libraryUrls.Starlight,
 	"https://raw.githubusercontent.com/Nebula-Softworks/Starlight-Interface-Suite/Gen1/Source.lua",
 	"https://cdn.jsdelivr.net/gh/Nebula-Softworks/Starlight-Interface-Suite@Gen1/Source.lua",
@@ -236,7 +241,7 @@ for pack, file in pairs({ Material = "MaterialIcons", Lucide = "LucideIcons" }) 
 end
 
 local okIcons = iconCount > 0
-local NebulaIcons = nil
+NebulaIcons = nil
 if okIcons then
 	NebulaIcons = {
 		GetIcon = function(_, name, pack)
@@ -253,9 +258,10 @@ if not okStarlight or not okIcons then
 		.. (okIcons and ("ok (" .. iconCount .. "/2 packs)") or "no pack loaded"))
 	return
 end
+end
 
 --//// Game Check
-if game.PlaceId ~= placeId then
+if game.PlaceId ~= Config.placeId then
 	Starlight:Notification({
 		Title = "Volaris Hub",
 		Content = "Wrong game! This script is for \"Paint a Manga!\".",
@@ -330,8 +336,11 @@ local QueueParagraph = nil
 --// Engine
 
 --//// Remotes
-local LP = Players.LocalPlayer
-local Net = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Net")
+local Remotes = {}
+local LP, Net, plots, loadNextFromQueue
+do
+LP = Players.LocalPlayer
+Net = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Net")
 
 local function waitRemote(name)
 	local remote = Net:WaitForChild(name, 30)
@@ -341,22 +350,25 @@ local function waitRemote(name)
 	end
 	return remote
 end
-local builtEvent = waitRemote("RE/CanvasBuilt")
-local fillsEvent = waitRemote("RE/CanvasFills")
-local clearedEvent = waitRemote("RE/CanvasCleared")
-local activeEvent = waitRemote("RE/ActiveChanged")
-local setActiveEvent = waitRemote("RE/SetActive")
-local completedEvent = waitRemote("RE/Completed")
-local requestRemote = waitRemote("RF/RequestCanvas")
-local searchRemote = waitRemote("RF/Search")
-local loadRemote = waitRemote("RF/LoadCover")
-local galleryRemote = waitRemote("RF/Gallery")
+Remotes.builtEvent = waitRemote("RE/CanvasBuilt")
+Remotes.fillsEvent = waitRemote("RE/CanvasFills")
+Remotes.clearedEvent = waitRemote("RE/CanvasCleared")
+Remotes.activeEvent = waitRemote("RE/ActiveChanged")
+Remotes.setActiveEvent = waitRemote("RE/SetActive")
+Remotes.completedEvent = waitRemote("RE/Completed")
+Remotes.requestRemote = waitRemote("RF/RequestCanvas")
+Remotes.searchRemote = waitRemote("RF/Search")
+Remotes.loadRemote = waitRemote("RF/LoadCover")
+Remotes.galleryRemote = waitRemote("RF/Gallery")
 
-local plots = {}
-local loadNextFromQueue
+plots = {}
+end
+
 
 --//// Visual State
-local Visuals = {
+local Visuals, ActorBridge, requestActorScan, requestActorPlan
+do
+Visuals = {
 	plots = {},
 	green = {},
 	greenPlot = nil,
@@ -440,6 +452,9 @@ function Visuals.rescan(state)
 		or typeof(L) ~= "buffer" or typeof(F) ~= "buffer" then
 		return
 	end
+
+	local second = state.Second or state.SecondLayer
+	if not (second and second > 0) or second == layer then second = nil end
 	local g = {}
 	local rowC = table.create(H, 0)
 	local colC = table.create(W, 0)
@@ -447,7 +462,8 @@ function Visuals.rescan(state)
 	local count = 0
 	local chunk = 0
 	for i = 0, (W * H) - 1 do
-		if buffer.readu8(L, i) == layer then
+		local li = buffer.readu8(L, i)
+		if li == layer or (second and li == second) then
 			layerTotal += 1
 			if buffer.readu8(F, i) ~= 1 then
 				g[i + 1] = true
@@ -477,9 +493,9 @@ function Visuals.rescan(state)
 	Visuals.dirty = false
 end
 
-local requestActorScan = nil
-local requestActorPlan = nil
-local ActorBridge = nil
+requestActorScan = nil
+requestActorPlan = nil
+ActorBridge = nil
 
 function Visuals.applyActorCounts(rowC, colC, count, layerTotal)
 	Visuals.greenRow = rowC
@@ -509,6 +525,7 @@ function Visuals.greensFor(state, serverLeft)
 	end
 	return Visuals
 end
+end
 
 --//// State Helpers
 local function on()
@@ -528,7 +545,10 @@ local function refreshStatsFrom(plotState)
 	Stats.filled = plotState.FilledCount or 0
 	Stats.layer = plotState.Layer or 0
 	Stats.layerCount = #(plotState.LayerRemaining or {})
-	local left = plotState.LayerRemaining and plotState.LayerRemaining[plotState.Layer or 0]
+	local left = plotState.LayerRemaining and plotState.LayerRemaining[plotState.Layer or 0] or 0
+	if plotState.Second and type(plotState.LayerRemaining) == "table" then
+		left += plotState.LayerRemaining[plotState.Second] or 0
+	end
 	Stats.layerLeft = (type(left) == "number") and left or 0
 	local done = 0
 	if type(plotState.LayerRemaining) == "table" then
@@ -569,16 +589,18 @@ local function applyWalkSpeed()
 end
 
 --//// Remote Mirror
+do
 local function ensureMirror()
 	if Global.Connections.Mirror then return end
 	local conns = {}
-	conns[#conns + 1] = builtEvent.OnClientEvent:Connect(function(d)
+	conns[#conns + 1] = Remotes.builtEvent.OnClientEvent:Connect(function(d)
 		if type(d) ~= "table" or type(d.Plot) ~= "string" then return end
 		local total = (d.Width or 0) * (d.Height or 0)
 		if total <= 0 or typeof(d.Layers) ~= "buffer" or typeof(d.Filled) ~= "buffer" then return end
 		plots[d.Plot] = {
 			Name = d.Plot, W = d.Width, H = d.Height, Total = total,
-			Layer = d.ActiveLayer, Layers = d.Layers, Filled = d.Filled,
+			Layer = d.ActiveLayer, Second = (d.SecondLayer and d.SecondLayer > 0) and d.SecondLayer or nil,
+			Layers = d.Layers, Filled = d.Filled,
 			LayerRemaining = d.LayerRemaining, FilledCount = d.FilledCount or 0,
 			Active = d.Active == true, part = plotPartOf(d.Plot),
 		}
@@ -592,7 +614,7 @@ local function ensureMirror()
 			task.spawn(Webhook.onBuilt)
 		end
 	end)
-	conns[#conns + 1] = fillsEvent.OnClientEvent:Connect(function(plotName, fillBuf, filledCount, layerRemaining)
+	conns[#conns + 1] = Remotes.fillsEvent.OnClientEvent:Connect(function(plotName, fillBuf, filledCount, layerRemaining)
 		local s = plots[plotName]
 		if not s then return end
 		if typeof(fillBuf) == "buffer" and buffer.len(fillBuf) % 4 == 0 then
@@ -610,15 +632,16 @@ local function ensureMirror()
 		Visuals.OnFills(plotName, fillBuf)
 		if s.Active then refreshStatsFrom(s) end
 	end)
-	conns[#conns + 1] = activeEvent.OnClientEvent:Connect(function(plotName, layer)
+	conns[#conns + 1] = Remotes.activeEvent.OnClientEvent:Connect(function(plotName, layer, second)
 		local s = plots[plotName]
 		Visuals.OnLayerChanged(plotName)
 		if s then
 			s.Layer = layer
+			s.Second = (second and second > 0) and second or nil
 			if s.Active then refreshStatsFrom(s) end
 		end
 	end)
-	conns[#conns + 1] = clearedEvent.OnClientEvent:Connect(function(plotName)
+	conns[#conns + 1] = Remotes.clearedEvent.OnClientEvent:Connect(function(plotName)
 		Visuals.OnCleared(plotName)
 		Global.LoadedCover = nil
 		if plots[plotName] then
@@ -629,7 +652,7 @@ local function ensureMirror()
 			end
 		end
 	end)
-	conns[#conns + 1] = completedEvent.OnClientEvent:Connect(function(d)
+	conns[#conns + 1] = Remotes.completedEvent.OnClientEvent:Connect(function(d)
 		Global.LastCompletedAt = os.clock()
 		Stats.coversDone += 1
 		Stats.officialCoverTime = (type(d) == "table" and tonumber(d.Seconds)) or nil
@@ -665,8 +688,9 @@ end
 
 ensureMirror()
 task.spawn(function()
-	pcall(function() requestRemote:InvokeServer() end)
+	pcall(function() Remotes.requestRemote:InvokeServer() end)
 end)
+end
 
 --//// Canvas Geometry
 local okPasses, Passes = pcall(require, ReplicatedStorage.Client.Systems.Passes)
@@ -677,22 +701,22 @@ local function brushRadiusCells()
 		local ok, s = pcall(Passes.GetBrushScale, Passes)
 		if ok and type(s) == "number" and s >= 1 then scale = s end
 	end
-	return brushStuds * scale / pixelSize
+	return Config.brushStuds * scale / Config.pixelSize
 end
 
 local function cellToWorld(s, x, y)
 	local p = s.part
 	return Vector3.new(
-		p.Position.X - p.Size.X * 0.5 + (x + 0.5) * pixelSize,
+		p.Position.X - p.Size.X * 0.5 + (x + 0.5) * Config.pixelSize,
 		p.Position.Y + p.Size.Y * 0.5,
-		p.Position.Z - p.Size.Z * 0.5 + (y + 0.5) * pixelSize
+		p.Position.Z - p.Size.Z * 0.5 + (y + 0.5) * Config.pixelSize
 	)
 end
 
 local function worldToCell(s, pos)
 	local p = s.part
-	return (pos.X - (p.Position.X - p.Size.X * 0.5)) / pixelSize,
-	       (pos.Z - (p.Position.Z - p.Size.Z * 0.5)) / pixelSize
+	return (pos.X - (p.Position.X - p.Size.X * 0.5)) / Config.pixelSize,
+	       (pos.Z - (p.Position.Z - p.Size.Z * 0.5)) / Config.pixelSize
 end
 
 local function charCell(s)
@@ -722,7 +746,12 @@ end
 --//// Layer Helpers
 local function layerRemainingOf(s, layer)
 	if type(s.LayerRemaining) ~= "table" then return nil end
-	return s.LayerRemaining[layer]
+	local n = s.LayerRemaining[layer]
+	if type(n) ~= "number" then return nil end
+	if layer == s.Layer and s.Second then
+		n += s.LayerRemaining[s.Second] or 0
+	end
+	return n
 end
 
 local function allLayersDone(s)
@@ -932,42 +961,6 @@ end
 
 local function leftoverTours(leftover, W, H, cfg, yield, fragments)
 	if #leftover == 0 then return end
-	local bx0, by0, bx1, by1 = math.huge, math.huge, -math.huge, -math.huge
-	for _, c in ipairs(leftover) do
-		if c.x < bx0 then bx0 = c.x end
-		if c.x > bx1 then bx1 = c.x end
-		if c.y < by0 then by0 = c.y end
-		if c.y > by1 then by1 = c.y end
-	end
-	local brushR = cfg.brushR
-	if #leftover >= 1200 and (bx1 - bx0 >= 24 or by1 - by0 >= 24) then
-		local horizontal = (bx1 - bx0) >= (by1 - by0)
-		local lo, hi = (horizontal and by0 or bx0), (horizontal and by1 or bx1)
-		local a0, a1 = (horizontal and bx0 or by0), (horizontal and bx1 or by1)
-		local centers = bandCenters(lo - 1, hi - 1, brushR)
-		local stops, flip = {}, false
-		for _, c0 in ipairs(centers) do
-			local c = c0 + 1
-			local s, e = a0, a1
-			if flip then s, e = e, s end
-			if horizontal then
-				stops[#stops + 1] = { x = s, y = c }
-				stops[#stops + 1] = { x = e, y = c }
-			else
-				stops[#stops + 1] = { x = c, y = s }
-				stops[#stops + 1] = { x = c, y = e }
-			end
-			flip = not flip
-		end
-		fragments[#fragments + 1] = {
-			kind = "band",
-			bands = #centers,
-			stops = stops,
-			covered = #leftover,
-			bbox = { bx0, by0, bx1, by1 },
-		}
-		return
-	end
 	local stops = groupCells(leftover, W, H, cfg.radius)
 	local gap = cfg.radius * 3 + 4
 	local areas = {}
@@ -1009,7 +1002,12 @@ local function scoreFrags(frags, pixel, speed, turnCost)
 		local st = f.stops
 		for _, p in ipairs(st) do
 			if px then
-				total += math.sqrt((p.x - px) ^ 2 + (p.y - py) ^ 2) * pixel / speed
+				local seg = math.sqrt((p.x - px) ^ 2 + (p.y - py) ^ 2)
+				total += seg * pixel / speed
+
+				if seg * pixel > 30 then
+					total += seg * pixel / speed * 0.8
+				end
 			end
 			px, py = p.x, p.y
 		end
@@ -1279,12 +1277,7 @@ local function planStrokes(cells, W, H, cfg, yield)
 						end
 						if cMaxA >= cMinA then
 							covered += #cellsNow
-							local s, e
-							if o.diag then
-								s, e = o.stopsFor(c0, cMinA, cMaxA)
-							else
-								s, e = o.stopsFor(c0, run.minA, run.maxA)
-							end
+							local s, e = o.stopsFor(c0, cMinA, cMaxA)
 							if flip then s, e = e, s end
 							stops[#stops + 1] = s
 							stops[#stops + 1] = e
@@ -1557,13 +1550,13 @@ local function planConfig(radius, brushR, scx, scy, forActor)
 		scx = scx,
 		scy = scy,
 		speed = math.max(16, Global.Values.WalkSpeed or 52),
-		pixel = pixelSize,
-		bandDense = bandDenseFrac,
-		bandMinRows = bandMinRows,
-		bandMinCount = bandMinCount,
-		bandMinRowCount = bandMinRowCount,
-		bandTurn = bandTurnTime,
-		twoOptMax = forActor and 400 or twoOptMax,
+		pixel = Config.pixelSize,
+		bandDense = Config.bandDenseFrac,
+		bandMinRows = Config.bandMinRows,
+		bandMinCount = Config.bandMinCount,
+		bandMinRowCount = Config.bandMinRowCount,
+		bandTurn = Config.bandTurnTime,
+		twoOptMax = forActor and 400 or Config.twoOptMax,
 		twoOptPasses = forActor and 2 or 8,
 		boxCells = tonumber(Global.Values.BoxCells) or nil,
 	}
@@ -1582,7 +1575,7 @@ end
 
 local function orderTour(points, startCx, startCy)
 	return planner.orderTour(points, startCx, startCy, {
-		twoOptMax = twoOptMax,
+		twoOptMax = Config.twoOptMax,
 		twoOptPasses = 8,
 	}, makeYield())
 end
@@ -1753,6 +1746,7 @@ end
 
 local function greensInBox(s, x0, y0, x1, y1, margin, wantLayer)
 	wantLayer = wantLayer or s.Layer
+	local second = (wantLayer == s.Layer) and s.Second or nil
 	x0 = math.max(0, math.floor(x0 - margin))
 	y0 = math.max(0, math.floor(y0 - margin))
 	x1 = math.min(s.W - 1, math.ceil(x1 + margin))
@@ -1764,9 +1758,11 @@ local function greensInBox(s, x0, y0, x1, y1, margin, wantLayer)
 		local base = y * W
 		for x = x0, x1 do
 			local idx = base + x + 1
-			if buffer.readu8(s.Filled, idx - 1) ~= 1
-				and buffer.readu8(s.Layers, idx - 1) == wantLayer then
-				cells[#cells + 1] = { x = x, y = y }
+			if buffer.readu8(s.Filled, idx - 1) ~= 1 then
+				local li = buffer.readu8(s.Layers, idx - 1)
+				if li == wantLayer or (second and li == second) then
+					cells[#cells + 1] = { x = x, y = y }
+				end
 			end
 		end
 		scanned += x1 - x0 + 1
@@ -1779,6 +1775,8 @@ local function greensInBox(s, x0, y0, x1, y1, margin, wantLayer)
 end
 
 --//// Movement
+local executeTour
+do
 local function segmentGreen(cur, tour, seg, brushR)
 	local i0, i1 = seg.i0, seg.i1
 	local span = i1 - i0
@@ -1822,14 +1820,16 @@ local function streamCellTour(s, tour, passDist)
 			visited += seg.i1 - seg.i0 + 1
 			local target = cellToWorld(cur, pEnd.x, pEnd.y)
 			local _, _, rootAt = getChar()
-			local dist = rootAt and ((target - rootAt.Position) * flatMask).Magnitude or 0
-			local timeout = math.min(1.0 + dist / 90, 2.5)
+			local dist = rootAt and ((target - rootAt.Position) * Config.flatMask).Magnitude or 0
+			local _, hAt = getChar()
+			local ws = hAt and math.max(10, hAt.WalkSpeed * 0.8) or 14
+			local timeout = math.min(1.0 + dist / ws, 20)
 			local reach = passDist
 			if rootAt and prevTarget then
-				local dir = (target - prevTarget) * flatMask
+				local dir = (target - prevTarget) * Config.flatMask
 				local dirMag = dir.Magnitude
 				if dirMag > 0.5 then
-					local rel = ((rootAt.Position - prevTarget) * flatMask):Dot(dir / dirMag)
+					local rel = ((rootAt.Position - prevTarget) * Config.flatMask):Dot(dir / dirMag)
 					if rel > passDist then
 						prevTarget = target
 						continue
@@ -1842,14 +1842,14 @@ local function streamCellTour(s, tour, passDist)
 				if (Global.BlatantGen or 0) ~= myGen then return visited, true end
 				local _, h, root = getChar()
 				if not h or not root then return visited end
-				local mag = ((root.Position - target) * flatMask).Magnitude
+				local mag = ((root.Position - target) * Config.flatMask).Magnitude
 				if mag <= reach then break end
 				if mag > lastMag + 1 then break end
 				lastMag = mag
 				h:MoveTo(target)
 				if os.clock() - t0 > timeout then break end
 				if os.clock() - lastCheck >= 1.2 then
-					if ((root.Position - lastPos) * flatMask).Magnitude < 0.5 then
+					if ((root.Position - lastPos) * Config.flatMask).Magnitude < 0.5 then
 						h.Jump = true
 					end
 					lastPos = root.Position
@@ -1886,7 +1886,7 @@ local function blatantTour(s, tour, dwell)
 			local target = cellToWorld(cur, pEnd.x, pEnd.y)
 			local _, _, root = getChar()
 			if not root then return visited end
-			if ((root.Position - pos) * flatMask).Magnitude > jumpDist then
+			if ((root.Position - pos) * Config.flatMask).Magnitude > Config.jumpDist then
 				root.CFrame = CFrame.new(pos.X, pos.Y + 2, pos.Z)
 				if dwell >= 0.2 then
 					task.wait(dwell * 0.4)
@@ -1901,13 +1901,13 @@ local function blatantTour(s, tour, dwell)
 				local _, _, rG = getChar()
 				if rG then glideY = rG.Position.Y end
 			end
-			local segDist = ((target - pos) * flatMask).Magnitude
+			local segDist = ((target - pos) * Config.flatMask).Magnitude
 			local deadline = os.clock() + math.min(4 + segDist / glideSpeed, 30)
 			while on() do
 				if (Global.BlatantGen or 0) ~= myGen then return visited, true end
 				local _, h2, root2 = getChar()
 				if not h2 or not root2 then return visited end
-				local flat = (target - root2.Position) * flatMask
+				local flat = (target - root2.Position) * Config.flatMask
 				local mag = flat.Magnitude
 				if mag <= 2 then break end
 				local stepDist = math.min(glideSpeed * stepTick, mag)
@@ -1922,7 +1922,7 @@ local function blatantTour(s, tour, dwell)
 	return visited
 end
 
-local function executeTour(s, tour, passDist, dwell)
+executeTour = function(s, tour, passDist, dwell)
 	local visited, switched
 	if Global.Toggles.Blatant then
 		visited, switched = blatantTour(s, tour, dwell or 0.2)
@@ -1938,6 +1938,8 @@ local function executeTour(s, tour, passDist, dwell)
 	end
 	return visited
 end
+end
+
 
 --//// Coop
 Global.Coop = Global.Coop or {
@@ -2036,6 +2038,7 @@ Coop.mesh = CoopMesh
 local meshDir = "VolarisHub/coop"
 
 --//// Coop area partition
+do
 local coopStripCache = nil
 function Coop.stripCuts(s, layer)
 	local myId = Players.LocalPlayer.UserId
@@ -2161,8 +2164,11 @@ function Coop.stripFor(s, layer)
 		count = data.count,
 	}
 end
+end
 
 --//// Paint Pass
+local paintCrawlCells, paintLayer, advanceLayer
+do
 local function paintCrawlCellsJob(s, cells, force, dwellPerCell)
 	local blatant = Global.Toggles.Blatant == true
 	local confirmWait = dwellPerCell or 0.9
@@ -2176,14 +2182,14 @@ local function paintCrawlCellsJob(s, cells, force, dwellPerCell)
 		local _, hum, root = getChar()
 		if not hum or not root then return end
 		if blatant then
-			if ((root.Position - pos) * flatMask).Magnitude > 1 then
+			if ((root.Position - pos) * Config.flatMask).Magnitude > 1 then
 				root.CFrame = CFrame.new(pos + Vector3.new(0, 2, 0))
 			end
 		else
 			local oldWs = hum.WalkSpeed
 			local t0 = os.clock()
 			while on() and os.clock() - t0 < 4 do
-				if ((root.Position - pos) * flatMask).Magnitude <= 6 then break end
+				if ((root.Position - pos) * Config.flatMask).Magnitude <= 6 then break end
 				hum:MoveTo(pos)
 				task.wait(0.05)
 				_, hum, root = getChar()
@@ -2193,7 +2199,7 @@ local function paintCrawlCellsJob(s, cells, force, dwellPerCell)
 				hum.WalkSpeed = math.min(hum.WalkSpeed, 24)
 				local t1 = os.clock()
 				while on() and os.clock() - t1 < 2 do
-					if ((root.Position - pos) * flatMask).Magnitude <= 1 then break end
+					if ((root.Position - pos) * Config.flatMask).Magnitude <= 1 then break end
 					hum:MoveTo(pos)
 					task.wait(0.05)
 					_, hum, root = getChar()
@@ -2212,7 +2218,7 @@ local function paintCrawlCellsJob(s, cells, force, dwellPerCell)
 	end
 end
 
-local function paintCrawlCells(s, cells, force, dwellPerCell)
+paintCrawlCells = function(s, cells, force, dwellPerCell)
 	Global.Crawling = (Global.Crawling or 0) + 1
 	local okC, errC = pcall(paintCrawlCellsJob, s, cells, force, dwellPerCell)
 	Global.Crawling = math.max(0, (Global.Crawling or 1) - 1)
@@ -2287,7 +2293,7 @@ local function spliceEntry(cur, fragments, brushR, area)
 	end
 	table.insert(fragments, 1, { kind = "box", stops = stops, covered = #stops })
 end
-local function paintLayer(s)
+paintLayer = function(s)
 	local layer = s.Layer
 	local brushR = brushRadiusCells()
 	local blatant = Global.Toggles.Blatant == true
@@ -2355,7 +2361,7 @@ local function paintLayer(s)
 			end
 		end
 	end
-	while round < maxRounds do		round += 1
+	while round < Config.maxRounds do		round += 1
 		if not on() then return end
 		local cur = plots[s.Name]
 		if not cur or cur.Layer ~= layer then return end
@@ -2373,7 +2379,7 @@ local function paintLayer(s)
 				if not Global.PhantomResyncAt or os.clock() - Global.PhantomResyncAt > 30 then
 					Global.PhantomResyncAt = os.clock()
 					Visuals.invalidate()
-					pcall(function() requestRemote:InvokeServer() end)
+					pcall(function() Remotes.requestRemote:InvokeServer() end)
 					task.wait(1.0)
 				end
 				if not areaFilter then
@@ -2516,7 +2522,7 @@ local function paintLayer(s)
 					if not Global.PhantomResyncAt or os.clock() - Global.PhantomResyncAt > 30 then
 						Global.PhantomResyncAt = os.clock()
 						Visuals.invalidate()
-						pcall(function() requestRemote:InvokeServer() end)
+						pcall(function() Remotes.requestRemote:InvokeServer() end)
 						task.wait(1.0)
 					end
 					if not areaFilter then
@@ -2568,6 +2574,7 @@ local function paintLayer(s)
 				or ("verifying Colour %d, round %d, %d left"):format(layer, round - 1, n))
 			.. (actorPlanned and " · parallel" or "")
 			.. (Coop.active and " · coop" or ""))
+
 		local passDist = round == 1 and 1.0 or 0.6
 		local dwell = round == 1 and 0.12 or 0.3
 		local ignoreZones = false
@@ -2710,6 +2717,7 @@ local function paintLayer(s)
 			end
 		end
 
+
 		local pfCur = plots[s.Name]
 		if round == 1 and pfCur and pfCur.Layer == layer and not prefetchFired then
 			local ex, ey = charCell(pfCur)
@@ -2726,7 +2734,7 @@ local function paintLayer(s)
 		if not on() then return end
 		if n >= lastCount then
 			stalls += 1
-			if stalls >= stallLimit then
+			if stalls >= Config.stallLimit then
 				warn(("[Volaris] Colour %d not clearing (%d left). moving on"):format(layer, n))
 				return
 			end
@@ -2738,7 +2746,7 @@ local function paintLayer(s)
 	end
 end
 
-local function advanceLayer(s, doneLayer)
+advanceLayer = function(s, doneLayer)
 	setPhase("advancing to next Colour")
 	if not nextLayerWithRemaining(s, doneLayer) then return end
 	local centroid = nextLayerCentroid(s, doneLayer)
@@ -2757,10 +2765,10 @@ local function advanceLayer(s, doneLayer)
 		local _, h, root = getChar()
 		if h and root and centroid then
 			if Global.Toggles.Blatant then
-				if ((root.Position - centroid) * flatMask).Magnitude > 8 then
+				if ((root.Position - centroid) * Config.flatMask).Magnitude > 8 then
 					root.CFrame = CFrame.new(centroid + Vector3.new(0, 2, 0))
 				end
-			elseif ((root.Position - centroid) * flatMask).Magnitude > 2 then
+			elseif ((root.Position - centroid) * Config.flatMask).Magnitude > 2 then
 				h:MoveTo(centroid)
 			end
 		end
@@ -2771,13 +2779,14 @@ local function advanceLayer(s, doneLayer)
 	if not on() or not s or s.Layer ~= doneLayer or allLayersDone(s) then return end
 	local nextL = nextLayerWithRemaining(s, doneLayer)
 	if nextL then
-		setActiveEvent:FireServer(nextL)
+		Remotes.setActiveEvent:FireServer(nextL)
 		waited = 0
 		while on() and plots[s.Name] and plots[s.Name].Layer == doneLayer and waited < 2 do
 			task.wait(0.2)
 			waited += 0.2
 		end
 	end
+end
 end
 
 --//// End-of-cover audit
@@ -2840,7 +2849,7 @@ local function auditSweep(s, gameTruth)
 			local cur = plots[s.Name]
 			if not cur or not cur.Active then return true end
 			if cur.Layer ~= l2 then
-				setActiveEvent:FireServer(l2)
+				Remotes.setActiveEvent:FireServer(l2)
 				local t0 = os.clock()
 				while os.clock() - t0 < 2 do
 					cur = plots[s.Name]
@@ -2894,7 +2903,7 @@ local function fetchGallery(force)
 		return G.cache
 	end
 	local ok, res = pcall(function()
-		return galleryRemote:InvokeServer({ Action = "List", IncludeDraft = true })
+		return Remotes.galleryRemote:InvokeServer({ Action = "List", IncludeDraft = true })
 	end)
 	if ok and type(res) == "table" and res.Ok == true and type(res.Entries) == "table" then
 		local byKey = {}
@@ -2914,7 +2923,9 @@ local function fetchGallery(force)
 end
 
 --//// Queueing
-local function queueNotify(title, content)
+local queueNotify, sessionSave, entryDisplay, queueSummaryLines, renderQueueEditor, renderSearchResults, refreshQueueDisplay, queueInsertItem, collectVolumes
+do
+queueNotify = function(title, content)
 	pcall(function()
 		Starlight:Notification({
 			Title = title,
@@ -2937,9 +2948,9 @@ local function volumeInfo(entry)
 	return base, tonumber(vol)
 end
 
-local sessionSave
 
-local function entryDisplay(e, maxLen)
+
+entryDisplay = function(e, maxLen)
 	local function dispWidth(s)
 		local ok, total = pcall(function()
 			local t = 0
@@ -3002,7 +3013,7 @@ local function entryDisplay(e, maxLen)
 	return title
 end
 
-local function queueSummaryLines()
+queueSummaryLines = function()
 	local q = Global.Values.Queue
 	if #q == 0 then
 		return { "(empty! queued covers load automatically when the current one finishes)" }
@@ -3038,9 +3049,9 @@ local function queueSummaryLines()
 	return lines
 end
 
-local renderQueueEditor, renderSearchResults, refreshQueueDisplay
 
-local function queueInsertItem(item, difficulty)
+
+queueInsertItem = function(item, difficulty)
 	local diff = difficulty or "Normal"
 	local prior = fetchGallery()[item.CoverUrl .. "\0" .. diff]
 	if prior then
@@ -3170,12 +3181,12 @@ local function parseQuery(query)
 	return query, volNum, lang
 end
 
-local function collectVolumes(series, lang)
+collectVolumes = function(series, lang)
 	local perSeries, seriesOrder = {}, {}
 	local page = 1
 	while page <= 10 do
 		local ok, res = pcall(function()
-			return searchRemote:InvokeServer({ Query = series, Page = page })
+			return Remotes.searchRemote:InvokeServer({ Query = series, Page = page })
 		end)
 		if not ok or type(res) ~= "table" or res.Ok ~= true
 			or type(res.Results) ~= "table" or #res.Results == 0 then
@@ -3283,7 +3294,7 @@ local function pickSearchResult(query, volNum, lang)
 	local page, picked, topSeries = 1, nil, nil
 	while page <= 3 do
 		local ok, res = pcall(function()
-			return searchRemote:InvokeServer({ Query = query, Page = page })
+			return Remotes.searchRemote:InvokeServer({ Query = query, Page = page })
 		end)
 		if not ok or type(res) ~= "table" or res.Ok ~= true
 			or type(res.Results) ~= "table" or #res.Results == 0 then
@@ -3363,6 +3374,8 @@ local function queueAdd(query, difficulty)
 end
 
 Global.QueueAdd = queueAdd
+
+end
 
 --//// Cover Preview
 local CoverPreview = {}
@@ -3676,8 +3689,10 @@ end
 local Session = { fsOk = nil }
 
 --//// Per-Account Storage
+local accountDir, filesystemWorks, sessionRestore
+do
 local accountSettings = { perAccountConfigs = false, defaultConfig = "", accounts = {} }
-local accountDir = "VolarisHub"
+accountDir = "VolarisHub"
 do
 	local myId = tostring(Players.LocalPlayer.UserId)
 	local raw = nil
@@ -3752,7 +3767,7 @@ end
 local sessionDir = accountDir
 local sessionFile = sessionDir .. "/session.json"
 
-local function filesystemWorks()
+filesystemWorks = function()
 	if Session.fsOk ~= nil then return Session.fsOk end
 	Session.fsOk = false
 	if type(makefolder) == "function" and type(writefile) == "function"
@@ -3791,7 +3806,7 @@ function sessionSave()
 	end
 end
 
-local function sessionRestore()
+sessionRestore = function()
 	if not filesystemWorks() then return end
 	local ok, raw = pcall(readfile, sessionFile)
 	if not ok or type(raw) ~= "string" then return end
@@ -3819,8 +3834,11 @@ local function sessionRestore()
 	end
 	pcall(refreshQueueDisplay)
 end
+end
 
 --//// Auto Load
+local fmtDuration
+do
 local queueLoadLock = 0
 
 local loadSkips = nil
@@ -3860,7 +3878,7 @@ loadNextFromQueue = function(explicit)
 	Global.LoadedCover = { title = entry.Title, difficulty = entry.Difficulty }
 	local requestedAt = os.clock()
 	local ok, res = pcall(function()
-		return loadRemote:InvokeServer({
+		return Remotes.loadRemote:InvokeServer({
 			CoverUrl = entry.CoverUrl,
 			ThumbUrl = entry.ThumbUrl,
 			Title = entry.Title,
@@ -3887,14 +3905,17 @@ loadNextFromQueue = function(explicit)
 end
 
 --// Features
-local function fmtDuration(sec)
+fmtDuration = function(sec)
 	sec = math.max(0, math.floor(sec))
 	if sec < 60 then return sec .. "s" end
 	if sec < 3600 then return ("%dm %02ds"):format(sec // 60, sec % 60) end
 	return ("%dh %02dm"):format(sec // 3600, (sec % 3600) // 60)
 end
+end
 
 --//// Discord Webhook
+local Features, runExclusive
+do
 do
 local hookCurrent
 local hookSessionStart = os.date("%Y-%m-%d %H:%M:%S")
@@ -4412,11 +4433,12 @@ Webhook.status = hookStatus
 Webhook.post = hookPost
 Webhook.embed = hookEmbed
 Webhook.Template = HOOK_DEFAULT_TEMPLATE
+
 end
 
-local Features = {}
+Features = {}
 
-local function runExclusive(name, body)
+runExclusive = function(name, body)
 	return function()
 		Global.Gens = Global.Gens or {}
 		Global.Gens[name] = (Global.Gens[name] or 0) + 1
@@ -4434,6 +4456,7 @@ local function runExclusive(name, body)
 		if not ok then error(err) end
 	end
 end
+end
 
 --//// Auto Paint
 Features.AutoPaint = function()
@@ -4450,7 +4473,7 @@ Features.AutoPaint = function()
 	Global.Running.AutoPaint = true
 
 	local ok, err = pcall(function()
-		pcall(function() requestRemote:InvokeServer() end)
+		pcall(function() Remotes.requestRemote:InvokeServer() end)
 
 		Stats.baselineFilled = Stats.filled or 0
 		Stats.activeSeconds = 0
@@ -4478,7 +4501,7 @@ Features.AutoPaint = function()
 			if not s.Layer or s.Layer == 0 then
 				local firstL = nextLayerWithRemaining(s, 0)
 				if firstL then
-					setActiveEvent:FireServer(firstL)
+					Remotes.setActiveEvent:FireServer(firstL)
 				end
 				task.wait(1)
 				continue
@@ -4723,6 +4746,8 @@ Features.AntiAFK = function()
 end
 
 --//// Staff Hop
+local hopAway
+do
 local staffGroup = 33388672
 local staffRoleNames = {
 	["content creator"] = true,
@@ -4749,7 +4774,7 @@ end
 
 local function pickServerJob()
 	local ok, res = pcall(function()
-		return game:HttpGet(("https://games.roblox.com/v1/games/%d/servers/Public?limit=100"):format(placeId))
+		return game:HttpGet(("https://games.roblox.com/v1/games/%d/servers/Public?limit=100"):format(Config.placeId))
 	end)
 	if not ok or type(res) ~= "string" then
 		warn("[Volaris] server hop: server list request failed: " .. tostring(res))
@@ -4780,7 +4805,7 @@ local function pickServerJob()
 	return jobs[math.random(1, math.min(10, #jobs))].id
 end
 
-local function hopAway(reason)
+hopAway = function(reason)
 	if hopBusy then return end
 	hopBusy = true
 	setPhase("server hop: " .. reason)
@@ -4801,7 +4826,7 @@ local function hopAway(reason)
 			pcall(queueTp, "loadstring(game:HttpGet(\"https://raw.githubusercontent.com/flyrbo/Volaris/refs/heads/main/Loader.luau\"))()")
 		end
 		local okTeleport, err = pcall(function()
-			game:GetService("TeleportService"):TeleportToPlaceInstance(placeId, jobId, LP)
+			game:GetService("TeleportService"):TeleportToPlaceInstance(Config.placeId, jobId, LP)
 		end)
 		if not okTeleport then
 			warn("[Volaris] server hop: teleport failed: " .. tostring(err))
@@ -4893,6 +4918,7 @@ Features.Smart = function()
 		task.wait(2)
 	end
 	Global.Running.Smart = false
+end
 end
 
 --//// Canvas Render Throttle
@@ -5336,7 +5362,7 @@ requestActorPlan = function(cur, radius, brushR, scx, scy, mode, windowOverride,
 		ActorBridge.planPendingSeq = nil
 		ActorBridge.planBroken = true
 		ActorBridge.planBrokenAt = os.clock()
-		return nil
+
 	end
 	return ActorBridge.planResult
 end
@@ -5436,7 +5462,7 @@ local function ensureCapture()
 	if not state and os.clock() - Visuals.captureAt > 5 then
 		Visuals.captureAt = os.clock()
 		task.spawn(function()
-			pcall(function() requestRemote:InvokeServer() end)
+			pcall(function() Remotes.requestRemote:InvokeServer() end)
 		end)
 	end
 	return state
@@ -5592,7 +5618,7 @@ Features.Pillars = runExclusive("Pillars", function(gen)
 				p.CastShadow = false
 				p.Locked = true
 				p.Material = Enum.Material.Neon
-				p.Size = Vector3.new(pixelSize, pillarHeight, pixelSize)
+				p.Size = Vector3.new(Config.pixelSize, pillarHeight, Config.pixelSize)
 				pool[i] = p
 			end
 			if p.Parent ~= folder then p.Parent = folder end
@@ -5601,9 +5627,9 @@ Features.Pillars = runExclusive("Pillars", function(gen)
 			local x = (idx - 1) % state.Width
 			local z = (idx - 1) // state.Width
 			p.CFrame = CFrame.new(
-				minX + (x + 0.5) * pixelSize,
+				minX + (x + 0.5) * Config.pixelSize,
 				topY + pillarHeight * 0.5,
-				minZ + (z + 0.5) * pixelSize
+				minZ + (z + 0.5) * Config.pixelSize
 			)
 		end
 		for i = k + 1, #pool do
@@ -5617,14 +5643,15 @@ Features.Pillars = runExclusive("Pillars", function(gen)
 end)
 
 --//// Arrow Pointer
+do
 local function findNearestCell(state)
 	local _, _, root = getChar()
 	if not root then return nil end
 	local minX, minZ = plotSurfaceOf(state)
 	if not minX then return nil end
 	local W, H = state.Width, state.Height
-	local cx = math.floor((root.Position.X - minX) / pixelSize)
-	local cz = math.floor((root.Position.Z - minZ) / pixelSize)
+	local cx = math.floor((root.Position.X - minX) / Config.pixelSize)
+	local cz = math.floor((root.Position.Z - minZ) / Config.pixelSize)
 	local L, F = state.Layers, state.Filled
 	local layer = state.ActiveLayer
 	local function isGreen(x, z)
@@ -5757,8 +5784,8 @@ Features.ArrowPointer = function()
 			if part.Parent then part.Parent = nil end
 			return
 		end
-		local tx = minX + (t.x + 0.5) * pixelSize
-		local tz = minZ + (t.z + 0.5) * pixelSize
+		local tx = minX + (t.x + 0.5) * Config.pixelSize
+		local tz = minZ + (t.z + 0.5) * Config.pixelSize
 		local pos = Vector3.new(root.Position.X, root.Position.Y + 2.4, root.Position.Z)
 		local dx, dz = tx - pos.X, tz - pos.Z
 		if dx * dx + dz * dz >= 0.0025 then
@@ -5792,8 +5819,11 @@ Features.ArrowPointer = function()
 	part:Destroy()
 	Global.Running.ArrowPointer = false
 end
+end
 
 --//// Tracers
+local shutdown, unload
+do
 local tracerCap = 250
 
 Features.Tracers = runExclusive("Tracers", function(gen)
@@ -5837,9 +5867,9 @@ Features.Tracers = runExclusive("Tracers", function(gen)
 				local x = (idx - 1) % cur.state.Width
 				local z = (idx - 1) // cur.state.Width
 				local sp = cam:WorldToViewportPoint(Vector3.new(
-					minX + (x + 0.5) * pixelSize,
+					minX + (x + 0.5) * Config.pixelSize,
 					topY,
-					minZ + (z + 0.5) * pixelSize
+					minZ + (z + 0.5) * Config.pixelSize
 				))
 				if sp.Z <= 0 then
 					l.Visible = false
@@ -5928,7 +5958,7 @@ local function stopConnections()
 	end
 end
 
-local function shutdown()
+shutdown = function()
 	pcall(function()
 		local host = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui")
 		if host then
@@ -5959,7 +5989,7 @@ local function shutdown()
 	genv.Volaris.PaintMangaHub = nil
 end
 
-local function unload()
+unload = function()
 	shutdown()
 	pcall(function()
 		local _, hum, root = getChar()
@@ -6014,6 +6044,7 @@ sessionRestore()
 --// Interface
 
 Global.NotifySilent = true
+end
 
 --//// Window
 pcall(function()
@@ -6059,7 +6090,9 @@ Window:CreateHomeTab({
 })
 
 --//// Painter Tab
-local Main = Window:CreateTabSection("Main")
+local Main
+do
+Main = Window:CreateTabSection("Main")
 
 local PainterTab = Main:CreateTab({
 	Name = "Main",
@@ -6202,6 +6235,7 @@ Labels.Eta = StatsBox:CreateLabel({ Name = "ETA: --" }, "PM_LBL_ETA")
 Labels.Session = StatsBox:CreateLabel({ Name = "Session: --" }, "PM_LBL_SESSION")
 Labels.Last = StatsBox:CreateLabel({ Name = "Last cover: --" }, "PM_LBL_LAST")
 Labels.Coop = StatsBox:CreateLabel({ Name = "Coop: --" }, "PM_LBL_COOP")
+end
 
 --//// Queue Tab
 local QueueTab = Main:CreateTab({
@@ -6306,7 +6340,7 @@ local QueueTab = Main:CreateTab({
 		renderSearchResults()
 		task.spawn(function()
 			local ok, res = pcall(function()
-				return searchRemote:InvokeServer({ Query = query, Page = 1 })
+				return Remotes.searchRemote:InvokeServer({ Query = query, Page = 1 })
 			end)
 			SearchState.busy = false
 			if ok and type(res) == "table" and res.Ok == true and type(res.Results) == "table" then
@@ -6685,6 +6719,7 @@ Global.QueueAddAll = queueAddAll
 end
 
 --//// Visuals Tab
+do
 local VisualsTab = Main:CreateTab({
 	Name = "Visuals",
 	Icon = NebulaIcons:GetIcon("palette", "Material"),
@@ -6819,7 +6854,11 @@ TracerBox:CreateInput({
 }, "PM_INPUT_TTHR")
 
 
+end
+
+
 --//// Misc Tab
+do
 local MiscTab = Main:CreateTab({
 	Name = "Misc",
 	Icon = NebulaIcons:GetIcon("puzzle", "Lucide"),
@@ -6894,8 +6933,10 @@ HopBox:CreateButton({
 		hopAway("manual hop")
 	end,
 }, "PM_BTN_HOPNOW")
+end
 
 --//// Coop Tab
+do
 do
 	local CoopTab = Main:CreateTab({
 		Name = "Coop",
@@ -7067,8 +7108,10 @@ local function coopUpdateTab()
 end
 Coop.updateTab = coopUpdateTab
 end
+end
 
 --//// Webhook Tab
+do
 local HookTab = Main:CreateTab({
 	Name = "Webhook",
 	Icon = NebulaIcons:GetIcon("webhook", "Lucide"),
@@ -7190,8 +7233,10 @@ TemplateBox:CreateButton({
 		end)
 	end,
 }, "PM_BTN_HOOKTEST")
+end
 
 --//// Settings Tab
+do
 local SettingsTab = Main:CreateTab({
 	Name = "Settings",
 	Icon = NebulaIcons:GetIcon("settings", "Material"),
@@ -7341,6 +7386,7 @@ Starlight:Notification({
 	Content = "Finished loading. Enable Auto Paint on the Painter tab (load a cover via Search first).",
 	Icon = NebulaIcons:GetIcon("check_circle", "Material"),
 }, "PM_LOAD_COMPLETE")
+end
 
 --//// Coop mesh (same-machine instances)
 function Coop.meshHeartbeat()
