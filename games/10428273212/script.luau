@@ -151,6 +151,11 @@ local function patchLibSource(key: string, src: string): string
 			"Parent%.Instance%.Size = UDim2%.fromOffset%(0, Parent%.Instance%.Size%.Y%.Offset %- additionSize%)",
 			"")
 		src = patched(s3, "slider destroy")
+		-- loading screen pacing
+		local s4 = src:gsub("task%.wait%(3%.24%)", "task.wait(0.4)")
+		src = patched(s4, "loading spin wait")
+		local s5 = src:gsub("task%.wait%(1%.72%)", "task.wait(0.25)")
+		src = patched(s5, "loading login wait")
 	end
 	return src
 end
@@ -175,10 +180,50 @@ local function bootLib(key, urls)
 		end
 		return okHttp, body
 	end
+
+	local function cacheFirst()
+		if not canCache then return false end
+		local okCache, cached = pcall(readfile, cachePath)
+		if not (okCache and type(cached) == "string" and #cached > 512) then
+			return false
+		end
+		local marker = "--vol:raw\n"
+		local libSrc = cached
+		if cached:sub(1, #marker) == marker then
+			libSrc = patchLibSource(key, cached:sub(#marker + 1))
+		end
+		local okFn, fn = pcall(loadstring, libSrc)
+		if not (okFn and fn) then
+			lastErr = ("cache compile failed: %.120s"):format(tostring(fn))
+			return false
+		end
+		local okRun, lib = pcall(fn)
+		if not (okRun and lib ~= nil) then
+			lastErr = ("cache run failed: %.120s"):format(tostring(lib))
+			return false
+		end
+		task.spawn(function()
+			for _, url in ipairs(urls) do
+				local okHttp, raw = httpGetDeadline(url, 20)
+				if okHttp and type(raw) == "string" and #raw > 512 then
+					local okFn2, fn2 = pcall(loadstring, patchLibSource(key, raw))
+					if okFn2 and fn2 then
+						pcall(writefile, cachePath, "--vol:raw\n" .. raw)
+						break
+					end
+				end
+			end
+		end)
+		return true, lib
+	end
+	local okCached, cachedLib = cacheFirst()
+	if okCached then
+		return true, cachedLib
+	end
 	for _, url in ipairs(urls) do
-		local okHttp, src = httpGetDeadline(url, 20)
-		if okHttp and type(src) == "string" and #src > 512 then
-			src = patchLibSource(key, src)
+		local okHttp, raw = httpGetDeadline(url, 20)
+		if okHttp and type(raw) == "string" and #raw > 512 then
+			local src = patchLibSource(key, raw)
 			local okFn, fn = pcall(loadstring, src)
 			if okFn and fn then
 				local okRun, lib = pcall(fn)
@@ -193,17 +238,17 @@ local function bootLib(key, urls)
 									makefolder(libCache)
 								end
 							end
-							writefile(cachePath, src)
+							writefile(cachePath, "--vol:raw\n" .. raw)
 						end)
 					end
 					return true, lib
 				end
-				lastErr = "run failed: " .. tostring(lib):sub(1, 120)
+				lastErr = ("run failed: %.120s"):format(tostring(lib))
 			else
-				lastErr = "compile failed: " .. tostring(fn):sub(1, 120)
+				lastErr = ("compile failed: %.120s"):format(tostring(fn))
 			end
 		else
-			lastErr = "fetch failed: " .. tostring(src):sub(1, 120)
+			lastErr = ("fetch failed: %.120s"):format(tostring(src))
 		end
 	end
 	if canCache then
@@ -215,7 +260,7 @@ local function bootLib(key, urls)
 				if okRun and lib ~= nil then
 					return true, lib
 				end
-				lastErr = "cache run failed: " .. tostring(lib):sub(1, 120)
+				lastErr = ("cache run failed: %.120s"):format(tostring(lib))
 			end
 		end
 	end
@@ -337,12 +382,12 @@ local QueueParagraph = nil
 
 --//// Remotes
 local Remotes = {}
-local LP, Net, plots, loadNextFromQueue
+local LP, Net: any, plots, loadNextFromQueue
 do
 LP = Players.LocalPlayer
 Net = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Net")
 
-local function waitRemote(name)
+local function waitRemote(name): any
 	local remote = Net:WaitForChild(name, 30)
 	if not remote then
 		warn(("[Volaris] Remote '%s' is missing - the game likely changed. Report this on the GitHub page."):format(name))
@@ -446,10 +491,19 @@ function Visuals.OnCleared(plotName)
 end
 
 function Visuals.rescan(state)
+	if Visuals.rescanning then
+		local t0 = os.clock()
+		while Visuals.rescanning and os.clock() - t0 < 3 do
+			task.wait(0.05)
+		end
+		return
+	end
+	Visuals.rescanning = true
 	local name, layer, W, H = stateKeys(state)
 	local L, F = state.Layers, state.Filled
 	if not name or not layer or not W or not H
 		or typeof(L) ~= "buffer" or typeof(F) ~= "buffer" then
+		Visuals.rescanning = false
 		return
 	end
 
@@ -491,6 +545,7 @@ function Visuals.rescan(state)
 	Visuals.greenCol = colC
 	Visuals.rescanAt = os.clock()
 	Visuals.dirty = false
+	Visuals.rescanning = false
 end
 
 requestActorScan = nil
@@ -781,6 +836,7 @@ local function nextLayerCentroid(s, fromLayer)
 	local L, F = s.Layers, s.Filled
 	local W = s.W
 	local x, y = 0, 0
+	local chunk = 0
 	for i = 0, s.Total - 1 do
 		if buffer.readu8(F, i) ~= 1 and buffer.readu8(L, i) == nl then
 			sumX += x
@@ -791,6 +847,11 @@ local function nextLayerCentroid(s, fromLayer)
 		if x == W then
 			x = 0
 			y += 1
+		end
+		chunk += 1
+		if chunk >= 65536 then
+			chunk = 0
+			task.wait()
 		end
 	end
 	if cnt == 0 then return nil end
@@ -883,6 +944,7 @@ local function orderTour(points, startCx, startCy, cfg, yield)
 	local used = table.create(n, false)
 	local tour = {}
 	local cx, cy = startCx, startCy
+	local scanned = 0
 	for _ = 1, n do
 		local bestJ, bestD = nil, math.huge
 		for j, p in ipairs(points) do
@@ -895,6 +957,8 @@ local function orderTour(points, startCx, startCy, cfg, yield)
 		used[bestJ] = true
 		tour[#tour + 1] = points[bestJ]
 		cx, cy = points[bestJ].x, points[bestJ].y
+		scanned += 1
+		if yield and scanned % 32 == 0 then yield() end
 	end
 	local passes = cfg.twoOptPasses or 2
 	if n >= 4 and n <= (cfg.twoOptMax or 400) then
@@ -1222,8 +1286,10 @@ local function planStrokes(cells, W, H, cfg, yield)
 			run.maxA = -math.huge
 		end
 		local runCellBuckets = {}
+		local stepped = 0
 		for _, i in ipairs(cells) do
-			if yield and #cells > 4000 then yield() end
+			stepped += 1
+			if yield and stepped % 4096 == 0 then yield() end
 			if not claimed[i] then
 				local id = runOf[o.perp(i)]
 				if id then
@@ -2260,6 +2326,7 @@ local function spliceEntry(cur, fragments, brushR, area)
 	if len2 < 1 then return end
 	local band2 = brushR * brushR
 	local corridor = {}
+	local walked = 0
 	for key in pairs(green) do
 		local i0 = key - 1
 		local x, y = i0 % cur.W, i0 // cur.W
@@ -2273,6 +2340,10 @@ local function spliceEntry(cur, fragments, brushR, area)
 			if ddx * ddx + ddy * ddy <= band2 then
 				corridor[#corridor + 1] = { x = x, y = y, t = t }
 			end
+		end
+		walked += 1
+		if walked % 65536 == 0 then
+			task.wait()
 		end
 	end
 	if #corridor == 0 then return end
@@ -2325,6 +2396,7 @@ paintLayer = function(s)
 		if typeof(L) ~= "buffer" or typeof(F) ~= "buffer" or not pfCur.Total then return end
 		local nArea = Coop.stripFor(pfCur, nextL)
 		local nCells = {}
+		local chunk = 0
 		for i = 0, pfCur.Total - 1 do
 			if buffer.readu8(L, i) == nextL and buffer.readu8(F, i) ~= 1 then
 				local keep = true
@@ -2336,6 +2408,11 @@ paintLayer = function(s)
 				if keep then
 					nCells[#nCells + 1] = i + 1
 				end
+			end
+			chunk += 1
+			if chunk >= 65536 then
+				chunk = 0
+				task.wait()
 			end
 		end
 		if #nCells == 0 then
@@ -3833,6 +3910,7 @@ sessionRestore = function()
 		Global.Start()
 	end
 	pcall(refreshQueueDisplay)
+	return
 end
 end
 
@@ -4597,6 +4675,7 @@ Features.StatLoop = function()
 	Global.Running.StatLoop = true
 
 	local samples = {}
+	local statText = {}
 	local lastTick = os.clock()
 
 	while Global.Alive do
@@ -4638,41 +4717,35 @@ Features.StatLoop = function()
 		Stats.coverEta = coverEta
 
 		pcall(function()
-			if Labels.Phase then Labels.Phase:Set({Name = "Status: " .. tostring(Stats.phase)}) end
-			if Labels.Color then
-				Labels.Color:Set({Name = ("Colour: %d / %d  (%d done)")
-					:format(Stats.layer, Stats.layerCount, Stats.colorsDone)})
-			end
-			if Labels.Left then
-				Labels.Left:Set({Name = ("In Colour: %d studs | Cover left: %d")
-					:format(Stats.layerLeft, coverLeft)})
-			end
-			if Labels.Overall then
-				Labels.Overall:Set({Name = ("Overall: %.1f%%  (%d / %d studs)")
-					:format(pct, Stats.filled, Stats.total)})
-			end
-			if Labels.Speed then
-				Labels.Speed:Set({Name = ("Speed: %s")
-					:format(ratePerMin > 0 and (("%.0f studs/min"):format(ratePerMin)) or "--")})
-			end
-			if Labels.Eta then
-				Labels.Eta:Set({Name = ("ETA: Colour %s | cover %s")
+			local shown = {
+				Phase = "Status: " .. tostring(Stats.phase),
+				Color = ("Colour: %d / %d  (%d done)")
+					:format(Stats.layer, Stats.layerCount, Stats.colorsDone),
+				Left = ("In Colour: %d studs | Cover left: %d")
+					:format(Stats.layerLeft, coverLeft),
+				Overall = ("Overall: %.1f%%  (%d / %d studs)")
+					:format(pct, Stats.filled, Stats.total),
+				Speed = "Speed: " .. (ratePerMin > 0 and (("%.0f studs/min"):format(ratePerMin)) or "--"),
+				Eta = ("ETA: Colour %s | cover %s")
 					:format(layerEta and fmtDuration(layerEta) or "--",
-						coverEta and fmtDuration(coverEta) or "--")})
-			end
-			if Labels.Session then
-				Labels.Session:Set({Name = ("Session: %s active | Covers finished: %d")
-					:format(fmtDuration(Stats.activeSeconds), Stats.coversDone)})
-			end
-			if Labels.Last then
-				Labels.Last:Set({Name = "Last cover: " .. (Stats.lastCover or "--")})
-			end
-			if Labels.Coop then
+						coverEta and fmtDuration(coverEta) or "--"),
+				Session = ("Session: %s active | Covers finished: %d")
+					:format(fmtDuration(Stats.activeSeconds), Stats.coversDone),
+				Last = "Last cover: " .. (Stats.lastCover or "--"),
+			}
+			if Coop.active then
 				local names = Coop.partnerNames and Coop.partnerNames() or {}
-				Labels.Coop:Set({ Name = Coop.active
-					and ("Coop: " .. table.concat(names, ", ")
-						.. (Coop.amLeader() and " · embed owner" or " · host owns embed"))
-					or "Coop: off (no party)" })
+				shown.Coop = "Coop: " .. table.concat(names, ", ")
+					.. (Coop.amLeader() and " · embed owner" or " · host owns embed")
+			else
+				shown.Coop = "Coop: off (no party)"
+			end
+
+			for key, txt in pairs(shown) do
+				if statText[key] ~= txt and Labels[key] then
+					statText[key] = txt
+					Labels[key]:Set({Name = txt})
+				end
 			end
 		end)
 		task.wait(0.25)
@@ -4931,10 +5004,12 @@ Features.CanvasFix = function()
 		warn("[Volaris] canvas lag fix unavailable (renderer module not found)")
 		return
 	end
+	local flushOrig: any = CanvasRender.Flush
+	local sweepOrig: any = CanvasRender.Sweep
 	local hook = {
 		module = CanvasRender,
-		flush = CanvasRender.Flush,
-		sweep = CanvasRender.Sweep,
+		flush = flushOrig,
+		sweep = sweepOrig,
 		lastFlush = 0,
 		lastSweep = 0,
 	}
@@ -4942,7 +5017,7 @@ Features.CanvasFix = function()
 		local now = os.clock()
 		if now - hook.lastFlush >= 0.1 then
 			hook.lastFlush = now
-			return hook.flush(self, ...)
+			return flushOrig(self, ...)
 		end
 		return nil
 	end
@@ -4950,11 +5025,52 @@ Features.CanvasFix = function()
 		local now = os.clock()
 		if now - hook.lastSweep >= 0.25 then
 			hook.lastSweep = now
-			return hook.sweep(self, ...)
+			return sweepOrig(self, ...)
 		end
 		return nil
 	end
+	local setActive = CanvasRender.SetActive
+	if type(setActive) == "function" then
+		CanvasRender.SetActive = function(self, plotName, layer, second)
+			if Visuals.upvalueRegistry == nil then
+				Visuals.tryUpvalueRegistry()
+			end
+			local reg = Visuals.upvalueRegistry
+			local st = nil
+			if type(reg) == "table" then
+				st = reg[plotName]
+				if not (type(st) == "table" and typeof(st.Pixels) == "buffer") then
+					for _, v in pairs(reg) do
+						if type(v) == "table" and v.Plot == plotName and typeof(v.Pixels) == "buffer" then
+							st = v
+							break
+						end
+					end
+				end
+			end
+			if not (type(st) == "table" and type(st.Total) == "number" and type(CanvasRender.WriteCell) == "function") then
+				return setActive(self, plotName, layer, second)
+			end
+			second = second or 0
+			if st.ActiveLayer == layer and st.SecondLayer == second then
+				return
+			end
+			st.ActiveLayer = layer
+			st.SecondLayer = second
+			local chunk = 0
+			for i = 1, st.Total do
+				CanvasRender.WriteCell(CanvasRender, st, i)
+				chunk += 1
+				if chunk >= 65536 then
+					chunk = 0
+					task.wait()
+				end
+			end
+			st.Dirty = true
+		end
+	end
 	Global.Connections.CanvasFix = hook
+	return
 end
 
 --//// Visuals Engine
@@ -5105,7 +5221,14 @@ chan.Event:Connect(function(job)
 		local out = { cmd = "planResult", seq = job.seq }
 		if type(job.cells) == "table" and type(job.w) == "number" and type(job.h) == "number"
 			and type(job.cfg) == "table" then
-			local deadline = os.clock() + math.clamp(tonumber(job.budget) or 10, 4, 150)
+			local ay = function()
+				if typeof(task) == "table" and type(task.wait) == "function" then
+					pcall(task.wait)
+				else
+					pcall(wait)
+				end
+			end
+			local deadline = os.clock() + math.min(math.clamp(tonumber(job.budget) or 10, 4, 150), 2.5)
 			local variants = {
 				{ "boxes", planBoxes, nil },
 				{ "boxes-B24", planBoxes, function(c) c.boxCells = 24 end },
@@ -5122,7 +5245,7 @@ chan.Event:Connect(function(job)
 				local cfg2 = {}
 				for k, val in pairs(job.cfg) do cfg2[k] = val end
 				if v[3] then v[3](cfg2) end
-				local okF, frags = pcall(v[2], job.cells, job.w, job.h, cfg2, nil)
+				local okF, frags = pcall(v[2], job.cells, job.w, job.h, cfg2, ay)
 				if okF and type(frags) == "table" and #frags > 0 then
 					local sc = scoreFrags(frags, job.cfg.pixel or (1 / 3), job.cfg.speed or 16, job.cfg.bandTurn or 0.5)
 					if not bestScore or sc < bestScore then
@@ -5141,7 +5264,7 @@ chan.Event:Connect(function(job)
 				for _, o in ipairs(order) do
 					if os.clock() > deadline - 0.4 then break end
 					local stops = best[o.fi].stops
-					polish2Opt(stops, stops[1].x, stops[1].y, deadline - 0.2)
+					polish2Opt(stops, stops[1].x, stops[1].y, math.min(deadline - 0.2, os.clock() + 1.5))
 				end
 			end
 			if best then
@@ -5526,6 +5649,7 @@ Features.RainbowStuds = runExclusive("RainbowStuds", function(gen)
 				local Pixels = state.Pixels
 				local W, H = state.Width, state.Height
 				local layer = state.ActiveLayer
+				local chunk = 0
 				for idx in pairs(Visuals.green) do
 					local i = idx - 1
 					if buffer.readu8(F, i) ~= 1 and buffer.readu8(L, i) == layer then
@@ -5534,6 +5658,11 @@ Features.RainbowStuds = runExclusive("RainbowStuds", function(gen)
 						buffer.writeu8(Pixels, off + 1, g)
 						buffer.writeu8(Pixels, off + 2, b)
 						buffer.writeu8(Pixels, off + 3, 255)
+					end
+					chunk += 1
+					if chunk >= 65536 then
+						chunk = 0
+						task.wait()
 					end
 				end
 				state.Dirty = true
@@ -5670,7 +5799,13 @@ local function findNearestCell(state)
 		end
 	end
 	local bd, best = math.huge, nil
+
+	local total = Visuals.greenCount or 0
+	local stride = (total > 4000) and math.ceil(total / 4000) or 1
+	local k = 0
 	for idx in pairs(Visuals.green) do
+		k += 1
+		if stride > 1 and k % stride ~= 0 then continue end
 		local x = (idx - 1) % W
 		local z = (idx - 1) // W
 		local d = (x - cx) * (x - cx) + (z - cz) * (z - cz)
@@ -6070,6 +6205,7 @@ Starlight:OnDestroy(function()
 	shutdown()
 end)
 
+task.wait()
 --//// Home Tab
 Window:CreateHomeTab({
 	SupportedExecutors = {},
@@ -6089,6 +6225,7 @@ Window:CreateHomeTab({
 	},
 })
 
+task.wait()
 --//// Painter Tab
 local Main
 do
@@ -6120,6 +6257,7 @@ AutoPaintToggle:AddBind({
 	end,
 }, "PM_BIND_AUTOPAINT")
 
+task.wait()
 local MoveBox = PainterTab:CreateGroupbox({ Name = "Movement", Column = 1 }, "PM_BOX_MOVE")
 MoveBox:CreateSlider({
 	Name = "WalkSpeed",
@@ -6134,6 +6272,7 @@ MoveBox:CreateSlider({
 	end,
 }, "PM_SLIDER_WALKSPEED")
 
+task.wait()
 local BlatantBox = PainterTab:CreateGroupbox({ Name = "Blatant", Column = 1 }, "PM_BOX_BLATANT")
 BlatantToggle = BlatantBox:CreateToggle({
 	Name = "Blatant Mode (adaptive teleport)",
@@ -6237,6 +6376,7 @@ Labels.Last = StatsBox:CreateLabel({ Name = "Last cover: --" }, "PM_LBL_LAST")
 Labels.Coop = StatsBox:CreateLabel({ Name = "Coop: --" }, "PM_LBL_COOP")
 end
 
+task.wait()
 --//// Queue Tab
 local QueueTab = Main:CreateTab({
 	Name = "Queue",
@@ -6718,6 +6858,7 @@ Global.QueueAddAll = queueAddAll
 	refreshQueueDisplay()
 end
 
+task.wait()
 --//// Visuals Tab
 do
 local VisualsTab = Main:CreateTab({
@@ -6857,6 +6998,7 @@ TracerBox:CreateInput({
 end
 
 
+task.wait()
 --//// Misc Tab
 do
 local MiscTab = Main:CreateTab({
@@ -6935,6 +7077,7 @@ HopBox:CreateButton({
 }, "PM_BTN_HOPNOW")
 end
 
+task.wait()
 --//// Coop Tab
 do
 do
@@ -7110,6 +7253,7 @@ Coop.updateTab = coopUpdateTab
 end
 end
 
+task.wait()
 --//// Webhook Tab
 do
 local HookTab = Main:CreateTab({
@@ -7235,6 +7379,7 @@ TemplateBox:CreateButton({
 }, "PM_BTN_HOOKTEST")
 end
 
+task.wait()
 --//// Settings Tab
 do
 local SettingsTab = Main:CreateTab({
